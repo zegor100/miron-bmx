@@ -20,11 +20,15 @@
   #rot { display: none; position: fixed; inset: 0; z-index: 30; background: #14201f; color: #fff;
     font: bold 22px Arial, sans-serif; align-items: center; justify-content: center; text-align: center; padding: 24px; }
   @media (orientation: portrait) { #rot { display: flex; } }
-  #start { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    background: radial-gradient(circle at 50% 30%, #2fb7ad 0%, #17605c 55%, #0c2c2b 100%); text-align: center; gap: 10px; padding: 12px; }
-  #start h1 { margin: 0; font-size: clamp(34px, 9vh, 64px); letter-spacing: 1px; text-shadow: 0 4px 0 #0a3b38; }
+  #start { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+    background: linear-gradient(90deg, rgba(6,24,28,.92) 0%, rgba(6,24,28,.66) 48%, rgba(6,24,28,.12) 100%), url(bg.jpg) 30% 100% / auto 125% no-repeat, #0c2c2b;
+    text-align: left; gap: 12px; padding: 12px 6vw; overflow: hidden; }
+  #start::after { content: ''; position: absolute; right: 3vw; bottom: 3vh; width: 44vw; height: 86vh; z-index: -1;
+    background: url(rider_full.png) center bottom / contain no-repeat; filter: drop-shadow(0 12px 14px rgba(0,0,0,.45)); animation: bob 2.4s ease-in-out infinite; }
+  @keyframes bob { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-10px) rotate(1deg); } }
+  #start h1 { margin: 0; font-size: clamp(40px, 13vh, 92px); line-height: 1; letter-spacing: 1px; text-shadow: 0 5px 0 #0a1f22, 0 10px 24px rgba(0,0,0,.5); }
   #start h1 b { color: #ff7a1a; }
-  #start p { margin: 0; font-size: clamp(14px, 3.6vh, 20px); max-width: 560px; line-height: 1.35; color: #d8fffb; }
+  #start p { margin: 0; font-size: clamp(14px, 3.6vh, 20px); max-width: 46vw; line-height: 1.4; color: #e4fffb; text-shadow: 0 2px 6px rgba(0,0,0,.6); }
   .btn { font: bold clamp(20px, 5vh, 30px) Arial, sans-serif; color: #fff; background: #ff6b2c; border: 0; border-radius: 40px;
     padding: 12px 46px; box-shadow: 0 6px 0 #a83f12; cursor: pointer; touch-action: manipulation; }
   .btn:active { transform: translateY(3px); box-shadow: 0 3px 0 #a83f12; }
@@ -268,6 +272,15 @@ function fmt(t) { const m = Math.floor(t / 60), s = t - m * 60; return m + ':' +
 class RaceScene extends Phaser.Scene {
   constructor() { super('race'); }
 
+  preload() {
+    this.load.image('rider', 'rider.png');
+    this.load.image('wheel', 'wheel.png');
+    this.load.image('bgimg', 'bg.jpg');
+    this.load.image('ground', 'ground.png');
+    this.load.image('wood', 'wood.jpg');
+    this.load.image('conc', 'conc.jpg');
+  }
+
   create() {
     const M = Phaser.Physics.Matter.Matter; this.M = M;
     this.matter.world.autoUpdate = false;
@@ -301,10 +314,10 @@ class RaceScene extends Phaser.Scene {
   // ---------- ввод ----------
   // Справа: ГАЗ (большая педаль) и ТОРМОЗ. Слева: наклон байка назад / вперёд. Плюс наклон телефона.
   setupInput() {
-    const brakeC = { x: W - 290, y: H - 80 }, fwdC = { x: 290, y: H - 80 };
+    const brakeC = { x: W - 222, y: H - 62 }, fwdC = { x: 222, y: H - 62 };
     const hit = (x, y) => {
-      if (x >= W / 2) return Math.hypot(x - brakeC.x, y - brakeC.y) < 85 ? 'BR' : 'GAS';
-      return Math.hypot(x - fwdC.x, y - fwdC.y) < 85 ? 'LF' : 'LB';
+      if (x >= W / 2) return Math.hypot(x - brakeC.x, y - brakeC.y) < 70 ? 'BR' : 'GAS';
+      return Math.hypot(x - fwdC.x, y - fwdC.y) < 70 ? 'LF' : 'LB';
     };
     this.input.on('pointerdown', p => { Sfx.init(); this.ctl.held[p.id] = hit(p.x, p.y); });
     this.input.on('pointermove', p => { if (p.isDown && this.ctl.held[p.id] !== undefined) this.ctl.held[p.id] = hit(p.x, p.y); });
@@ -329,35 +342,18 @@ class RaceScene extends Phaser.Scene {
 
   // ---------- фон ----------
   buildBackground() {
-    const sky = this.add.graphics().setScrollFactor(0).setDepth(-100);
-    const bands = 24;
-    for (let i = 0; i < bands; i++) {
-      const t = i / (bands - 1);
-      const c = Phaser.Display.Color.Interpolate.ColorWithColor(new Phaser.Display.Color(86, 170, 232), new Phaser.Display.Color(255, 226, 190), 100, Math.round(t * 100));
-      sky.fillStyle(Phaser.Display.Color.GetColor(c.r, c.g, c.b), 1); sky.fillRect(0, i * H / bands, W, H / bands + 1);
-    }
-    const sun = this.add.graphics().setScrollFactor(0).setDepth(-99);
-    for (let r = 150; r > 20; r -= 14) { sun.fillStyle(0xfff3b0, 0.05 + (150 - r) / 1400); sun.fillCircle(780, 120, r); }
-    sun.fillStyle(0xfffbe0, 1); sun.fillCircle(780, 120, 34);
-    const clouds = this.add.graphics().setScrollFactor(0.1, 0.1).setDepth(-95);
-    for (let i = 0; i < 16; i++) {
-      const cx = i * 300 + 60, cy = 60 + (i * 53) % 140;
-      clouds.fillStyle(0xffffff, 0.85); clouds.fillEllipse(cx, cy, 150, 36); clouds.fillEllipse(cx + 36, cy - 14, 95, 34); clouds.fillEllipse(cx - 40, cy - 6, 80, 28);
-    }
-    this.hills(0.15, 0.3, 380, 70, 0x8fc7a9, 0.011, 3, -92);
-    this.hills(0.3, 0.45, 430, 60, 0x6fb08e, 0.017, 7, -91);
-    this.drawTrees(0.45, 0.55, 600, 130, 0x4c9a52, 0x3f8a48, 0x2f7239, 11, -90);
-    this.drawTrees(0.7, 0.8, 640, 190, 0x3c8a45, 0x2d6e37, 0x215a2c, 23, -80);
-    const dec = this.add.graphics().setDepth(-5);
-    for (let x = 300; x < LEVEL.finishX + 800; x += 640) {
-      const y = groundY(x);
-      dec.fillStyle(0x3a4046, 1); dec.fillRect(x - 3, y - 170, 6, 170); dec.fillRect(x - 3, y - 170, 30, 5);
-      dec.fillStyle(0xfff2a8, 1); dec.fillCircle(x + 26, y - 162, 7);
-    }
-    for (let x = 640; x < LEVEL.finishX + 800; x += 1320) {
-      const y = groundY(x);
-      dec.fillStyle(0x7a5230, 1); dec.fillRect(x - 28, y - 30, 56, 7); dec.fillRect(x - 28, y - 52, 56, 6); dec.fillRect(x - 24, y - 30, 5, 30); dec.fillRect(x + 20, y - 30, 5, 30);
-    }
+    // нарисованный фон: осенний парк и силуэт Петербурга, параллакс (картинка зеркально сшита, стык незаметен)
+    this.bgT = this.add.tileSprite(0, 0, W, H, 'bgimg').setOrigin(0, 0).setScrollFactor(0).setDepth(-100);
+    this.bgScale = H / 672 * 1.02;
+    this.bgT.setTileScale(this.bgScale, this.bgScale);
+    // лёгкое затемнение к низу, чтобы земля и байк читались
+    const sh = this.add.graphics().setScrollFactor(0).setDepth(-99);
+    for (let i = 0; i < 12; i++) { sh.fillStyle(0x1a2a14, 0.012 * i); sh.fillRect(0, H * 0.55 + i * (H * 0.45 / 12), W, H * 0.45 / 12 + 1); }
+  }
+  updateBg() {
+    const cam = this.cameras.main;
+    this.bgT.tilePositionX = cam.scrollX * 0.18 / this.bgScale;
+    this.bgT.tilePositionY = -Phaser.Math.Clamp((cam.scrollY - 250) * 0.02, -5, 5) / this.bgScale;
   }
   hills(sfx, sfy, baseY, amp, color, freq, seed, depth) {
     const g = this.add.graphics().setScrollFactor(sfx, sfy).setDepth(depth);
@@ -386,25 +382,30 @@ class RaceScene extends Phaser.Scene {
   buildTerrain() {
     const M = this.M, g = this.add.graphics().setDepth(0);
     const inR = (x, r) => r.some(a => x >= a[0] && x <= a[1]);
-    const colorAt = x => inR(x, LEVEL.wood) ? [0xc98f4a, 0x8a5a26, 0xe0a85f] : inR(x, LEVEL.concrete) ? [0xb3b7bd, 0x7d8189, 0xd5d8dd] : [0xb27a4e, 0x5f9442, 0xc9935f];
+    const kind = x => inR(x, LEVEL.wood) ? 'wood' : inR(x, LEVEL.concrete) ? 'conc' : 'dirt';
     const bottom = 1400, n = HF.ys.length;
+    // нарисованный рельеф: полосы текстуры по рельефу (10 px, поворот по наклону)
+    const SW = 10;
+    const mk = (key, prefix, surf, fgH, sh) => {
+      const tx = this.textures.get(key), TW = tx.getSourceImage().width, TH = sh || tx.getSourceImage().height, NF = Math.floor((TW - 14) / SW);
+      for (let k = 0; k < NF; k++) { tx.add(prefix + 's' + k, 0, k * SW, 0, SW + 3, TH); if (fgH) tx.add(prefix + 'f' + k, 0, k * SW, 0, SW + 3, fgH); }
+      return { key, prefix, surf, TH, NF, fgH };
+    };
+    const T = { dirt: mk('ground', 'd', 34, 40), wood: mk('wood', 'w', 2, 0, 52), conc: mk('conc', 'c', 2, 0, 52) };
+    const under = { dirt: [[40, 0x78563c], [90, 0x6b4a33], [140, 0x5f402c], [190, 0x563a27]], wood: [[20, 0xa9783f], [90, 0x9a6b37], [200, 0x8a5c2c]], conc: [[20, 0x9a9ea5], [90, 0x8d9199], [200, 0x7f838b]] };
     for (let i = 0; i < n - 1; i++) {
-      const x = HF.x0 + i * HF.step, c = colorAt(x), y1 = HF.ys[i], y2 = HF.ys[i + 1], xe = x + HF.step + 0.6;
-      g.fillStyle(c[0], 1); g.fillPoints([{ x, y: y1 }, { x: xe, y: y2 }, { x: xe, y: bottom }, { x, y: bottom }], true);
-      g.fillStyle(c[2], 0.55); g.fillPoints([{ x, y: y1 + 6 }, { x: xe, y: y2 + 6 }, { x: xe, y: y2 + 20 }, { x, y: y1 + 20 }], true);
-      g.fillStyle(0x000000, 0.2); g.fillPoints([{ x, y: y1 + 110 }, { x: xe, y: y2 + 110 }, { x: xe, y: bottom }, { x, y: bottom }], true);
+      const x = HF.x0 + i * HF.step, y1 = HF.ys[i], y2 = HF.ys[i + 1], xe = x + HF.step + 0.6, kd = kind(x), t = T[kd];
+      under[kd].forEach(([d, col]) => { g.fillStyle(col, 1); g.fillPoints([{ x, y: y1 + d }, { x: xe, y: y2 + d }, { x: xe, y: bottom }, { x, y: bottom }], true); });
+      const ang = Math.atan2(y2 - y1, HF.step), fi = ((i % t.NF) + t.NF) % t.NF;
+      this.add.image(x, y1, t.key, t.prefix + 's' + fi).setOrigin(0, t.surf / t.TH).setRotation(ang).setDepth(0.4);
+      if (t.fgH) this.add.image(x, y1, t.key, t.prefix + 'f' + fi).setOrigin(0, t.surf / t.fgH).setRotation(ang).setDepth(6);
     }
+    const og = this.add.graphics().setDepth(0.6);
     for (let i = 0; i < n - 1; i++) {
-      const x = HF.x0 + i * HF.step, c = colorAt(x);
-      g.lineStyle(8, c[1], 1); g.beginPath(); g.moveTo(x, HF.ys[i] - 1); g.lineTo(x + HF.step, HF.ys[i + 1] - 1); g.strokePath();
+      const x = HF.x0 + i * HF.step, kd = kind(x); if (kd === 'dirt') continue;
+      og.lineStyle(4, kd === 'wood' ? 0x3b2410 : 0x3d4148, 1); og.beginPath(); og.moveTo(x, HF.ys[i]); og.lineTo(x + HF.step, HF.ys[i + 1]); og.strokePath();
     }
     let s = 5; const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
-    for (let x = HF.x0 + 20; x < HF.x0 + (n - 1) * HF.step; x += 22 + rnd() * 30) {
-      const c = colorAt(x), y = groundY(x);
-      if (c[0] === 0xb27a4e) { g.lineStyle(2, 0x4c8a37, 1); for (let k = -1; k <= 1; k++) { g.beginPath(); g.moveTo(x + k * 3, y); g.lineTo(x + k * 5, y - 7 - rnd() * 6); g.strokePath(); } }
-      if (rnd() > 0.7) { g.fillStyle(0x8a5e3a, 1); g.fillCircle(x + 5, y + 18 + rnd() * 40, 2 + rnd() * 3); }
-    }
-    LEVEL.wood.forEach(r => { for (let x = r[0]; x < r[1]; x += 22) { g.lineStyle(2, 0x7a4c1e, 0.8); g.beginPath(); g.moveTo(x, groundY(x) + 3); g.lineTo(x, groundY(x) + 24); g.strokePath(); } });
     for (let i = 0; i < n - 1; i++) {
       const x1 = HF.x0 + i * HF.step, y1 = HF.ys[i], x2 = x1 + HF.step, y2 = HF.ys[i + 1];
       const len = Math.hypot(x2 - x1, y2 - y1), ang = Math.atan2(y2 - y1, x2 - x1);
@@ -439,12 +440,12 @@ class RaceScene extends Phaser.Scene {
     this.shadow = this.add.ellipse(0, 0, 110, 12, 0x000000, 0.25).setDepth(2);
     this.trail = this.add.graphics().setDepth(3);
     this.trailPts = [];
-    this.wheelR = this.add.graphics().setDepth(5); drawWheel(this.wheelR);
-    this.wheelF = this.add.graphics().setDepth(5); drawWheel(this.wheelF);
-    this.frameG = this.add.graphics(); drawFrame(this.frameG);
-    this.riderG = this.add.graphics();
-    this.plate = this.add.text(36, -34, '97', { fontFamily: 'Arial', fontStyle: 'bold', fontSize: '11px', color: '#111' }).setOrigin(0.5);
-    this.bikeC = this.add.container(0, 0, [this.frameG, this.riderG, this.plate]).setDepth(5);
+    // нарисованный байк: рама с гонщиком + два вращающихся колеса (ступицы совпадают с шарнирами физики)
+    const K = (2 * HALF_BASE) / 362.5, WS = (2 * WHEEL_R + 1.5) / 256;
+    this.wheelR = this.add.image(0, 0, 'wheel').setScale(WS).setDepth(5);
+    this.wheelF = this.add.image(0, 0, 'wheel').setScale(WS).setDepth(5);
+    this.riderI = this.add.image(-HALF_BASE, 0, 'rider').setOrigin(17 / 420, 461 / 509).setScale(K);
+    this.bikeC = this.add.container(0, 0, [this.riderI]).setDepth(5.5);
   }
   anchor() {
     const b = this.bike, c = Math.cos(b.angle), s = Math.sin(b.angle);
@@ -648,40 +649,54 @@ class RaceScene extends Phaser.Scene {
     for (let i = 0; i < n; i++) { const an = Math.random() * Math.PI * 2, v = 2 + Math.random() * 6; this.parts.push({ x, y, vx: Math.cos(an) * v, vy: Math.sin(an) * v - 3, life: 1, dec: 0.012 + Math.random() * 0.01, r: 3 + Math.random() * 3, col: cols[(Math.random() * cols.length) | 0], grav: 0.22 }); }
   }
 
+  // гонщик на байке, стоит на месте (для пьедестала): контейнер, начало координат внизу по центру
+  riderSprite(x, y, sc) {
+    const WSZ = 198 / 256;
+    const w1 = this.add.image(-193, -99, 'wheel').setScale(WSZ), w2 = this.add.image(169.5, -99, 'wheel').setScale(WSZ);
+    const r = this.add.image(0, -560, 'rider').setOrigin(0.5, 0);
+    return this.add.container(x, y, [w1, w2, r]).setScale(sc);
+  }
+
   showPodium() {
     this.state = 'done';
     const { t, medal, newRecord } = this.result;
     const cx = W / 2, cy = H / 2;
     const root = this.add.container(0, 0).setScrollFactor(0).setDepth(100);
-    const dim = this.add.rectangle(cx, cy, W, H, 0x000000, 0.55);
-    const panel = this.add.rectangle(cx, cy, 700, 440, 0x1f3b3a, 1).setStrokeStyle(4, 0xffd23f);
+    const dim = this.add.rectangle(cx, cy, W, H, 0x04141a, 0.6);
+    const panel = this.add.graphics();
+    panel.fillStyle(0x000000, 0.35); panel.fillRoundedRect(cx - 386, cy - 212, 780, 440, 26);
+    panel.fillStyle(0x10302f, 0.96); panel.fillRoundedRect(cx - 390, cy - 220, 780, 440, 26);
+    panel.lineStyle(5, 0xffc93c, 1); panel.strokeRoundedRect(cx - 390, cy - 220, 780, 440, 26);
     const st = (size, color) => ({ fontFamily: 'Arial', fontStyle: 'bold', fontSize: size + 'px', color: color || '#fff' });
-    const title = this.add.text(cx, cy - 192, 'Финиш, Мирон!', st(38, '#ffe14d')).setOrigin(0.5);
-    const timeT = this.add.text(cx, cy - 148, fmt(t) + (newRecord ? '   новый рекорд!' : '   рекорд ' + fmt(this.best.time)), st(24)).setOrigin(0.5);
-    const scoreT = this.add.text(cx, cy - 118, 'Сальто: ' + this.flips + '   Очки: ' + this.score, st(20, '#bfe9e5')).setOrigin(0.5);
+    const px = cx - 200, base = cy + 150, bw = 104;
+    const blocks = [{ x: px - bw, h: 66, n: '2', c: 0xc3cad2, m: 1 }, { x: px, h: 104, n: '1', c: 0xf2c230, m: 0 }, { x: px + bw, h: 44, n: '3', c: 0xcd8a4e, m: 2 }];
     const g = this.add.graphics();
-    const base = cy + 125, bw = 120;
-    const blocks = [{ x: cx - bw, h: 80, n: '2', c: 0xc0c7cf, m: 1 }, { x: cx, h: 115, n: '1', c: 0xf2c230, m: 0 }, { x: cx + bw, h: 55, n: '3', c: 0xc8854a, m: 2 }];
-    blocks.forEach(b => { g.fillStyle(b.c, 1); g.fillRect(b.x - bw / 2 + 3, base - b.h, bw - 6, b.h); });
-    root.add([dim, panel, title, timeT, scoreT, g]);
-    blocks.forEach(b => root.add(this.add.text(b.x, base - b.h / 2, b.n, st(40, '#3a2a10')).setOrigin(0.5)));
-    const boy = this.add.graphics();
+    g.fillStyle(0x000000, 0.25); g.fillEllipse(px, base + 4, 340, 18);
+    blocks.forEach(b => { g.fillStyle(b.c, 1); g.fillRoundedRect(b.x - bw / 2 + 3, base - b.h, bw - 6, b.h, { tl: 8, tr: 8, bl: 0, br: 0 }); g.fillStyle(0xffffff, 0.22); g.fillRect(b.x - bw / 2 + 3, base - b.h, bw - 6, 6); });
+    root.add([dim, panel, g]);
+    blocks.forEach(b => root.add(this.add.text(b.x, base - b.h / 2 + 4, b.n, st(38, '#3a2a10')).setOrigin(0.5)));
+    const rx = medal >= 0 ? blocks.find(k => k.m === medal).x : px + bw + 4, ry = medal >= 0 ? base - blocks.find(k => k.m === medal).h : base - 44;
+    root.add(this.riderSprite(rx, ry, 0.27));
+    const tx = cx + 170;
+    root.add(this.add.text(tx, cy - 168, 'ФИНИШ, МИРОН!', st(34, '#ffe14d')).setOrigin(0.5));
     if (medal >= 0) {
-      const b = blocks.find(k => k.m === medal);
-      drawBoyStanding(boy, b.x, base - b.h);
-      const col = [0xffd23f, 0xd9dee4, 0xcd7f32][medal];
-      boy.lineStyle(4, 0xd62828, 1); boy.beginPath(); boy.moveTo(b.x - 8, base - b.h - 52); boy.lineTo(b.x, base - b.h - 36); boy.lineTo(b.x + 8, base - b.h - 52); boy.strokePath();
-      boy.fillStyle(col, 1); boy.fillCircle(b.x, base - b.h - 34, 11); boy.lineStyle(2, 0x000000, 0.5); boy.strokeCircle(b.x, base - b.h - 34, 11);
-      root.add(this.add.text(cx, cy - 82, ['ЗОЛОТО!', 'СЕРЕБРО!', 'БРОНЗА!'][medal], st(34, ['#ffd23f', '#e6ebf0', '#e8a366'][medal])).setOrigin(0.5));
+      const col = [0xffd23f, 0xdfe4ea, 0xcd7f32][medal], mg = this.add.graphics();
+      mg.fillStyle(0xd62828, 1); mg.fillTriangle(tx - 26, cy - 126, tx - 2, cy - 126, tx + 10, cy - 70); mg.fillStyle(0x2a6fd0, 1); mg.fillTriangle(tx + 26, cy - 126, tx + 2, cy - 126, tx - 10, cy - 70);
+      mg.fillStyle(col, 1); mg.fillCircle(tx, cy - 48, 42); mg.lineStyle(5, 0xffffff, 0.85); mg.strokeCircle(tx, cy - 48, 42); mg.lineStyle(3, 0x000000, 0.25); mg.strokeCircle(tx, cy - 48, 32);
+      mg.fillStyle(0xffffff, 0.4); mg.fillCircle(tx - 14, cy - 62, 9);
+      root.add(mg);
+      root.add(this.add.text(tx, cy - 48, ['1', '2', '3'][medal], st(40, '#3a2a10')).setOrigin(0.5));
+      root.add(this.add.text(tx, cy + 18, ['ЗОЛОТО!', 'СЕРЕБРО!', 'БРОНЗА!'][medal], st(38, ['#ffd23f', '#e6ebf0', '#e8a366'][medal])).setOrigin(0.5));
     } else {
-      drawBoyStanding(boy, cx + 2 * bw + 20, base);
-      root.add(this.add.text(cx, cy - 82, 'Почти! Ещё разок?', st(30, '#ffe9a8')).setOrigin(0.5));
+      root.add(this.add.text(tx, cy - 40, 'Почти! Ещё разок?', Object.assign(st(36, '#ffe9a8'), { align: 'center' })).setOrigin(0.5));
     }
-    root.add(boy);
-    const btn = this.add.rectangle(cx, cy + 172, 280, 56, 0x2bb673).setStrokeStyle(3, 0xffffff).setInteractive({ useHandCursor: true });
-    const btnT = this.add.text(cx, cy + 172, 'Ещё раз', st(28)).setOrigin(0.5);
+    root.add(this.add.text(tx, cy + 62, fmt(t) + (newRecord ? '  новый рекорд!' : ''), st(26)).setOrigin(0.5));
+    root.add(this.add.text(tx, cy + 92, (newRecord ? '' : 'рекорд ' + fmt(this.best.time) + '   ') + 'сальто ' + this.flips + '   очки ' + this.score, st(18, '#bfe9e5')).setOrigin(0.5));
+    const bg = this.add.graphics(); bg.fillStyle(0x0a6b3a, 1); bg.fillRoundedRect(tx - 120, cy + 122, 240, 56, 28); bg.fillStyle(0x2bb673, 1); bg.fillRoundedRect(tx - 120, cy + 118, 240, 56, 28); bg.lineStyle(3, 0xffffff, 0.9); bg.strokeRoundedRect(tx - 120, cy + 118, 240, 56, 28);
+    const btn = this.add.rectangle(tx, cy + 146, 240, 56, 0x000000, 0.001).setInteractive({ useHandCursor: true });
+    const btnT = this.add.text(tx, cy + 146, 'Ещё раз', st(28)).setOrigin(0.5);
     btn.on('pointerup', () => { window.__autostart = true; this.scene.restart(); });
-    root.add([btn, btnT]);
+    root.add([bg, btn, btnT]);
     this.hudBest.setText('Рекорд: ' + fmt(this.best.time));
     root.setAlpha(0); this.tweens.add({ targets: root, alpha: 1, duration: 300 });
   }
@@ -692,9 +707,9 @@ class RaceScene extends Phaser.Scene {
     const inp = this.readInput();
     this.crouchVis += ((inp.brake ? 1 : 0) - this.crouchVis) * 0.2;
     this.tiltVis += (inp.lean - this.tiltVis) * 0.3;
-    const crank = wr.angle * 0.55;
-    drawRiderDyn(this.riderG, crank, this.crouchVis * 0.6, this.airTicks > 3 ? -this.tiltVis : 0);
+    this.riderI.setScale(this.riderI.scaleX, (2 * HALF_BASE) / 362.5 * (1 - this.crouchVis * 0.05));
     this.bikeC.setPosition(a.x, a.y).setRotation(b.angle);
+    this.updateBg();
     this.wheelR.setPosition(wr.position.x, wr.position.y).setRotation(wr.angle);
     this.wheelF.setPosition(wf.position.x, wf.position.y).setRotation(wf.angle);
     const gy = groundY(a.x), hgt = Math.max(0, gy - a.y - WHEEL_R);
@@ -728,9 +743,9 @@ class RaceScene extends Phaser.Scene {
     const g = this.pedalG; g.clear();
     const btn = (cx, cy, r, pressed, col, icon) => {
       const k = pressed ? 0.93 : 1;
-      g.fillStyle(0x000000, 0.3); g.fillCircle(cx, cy + 5, r * k);
-      g.fillStyle(col, pressed ? 0.95 : 0.78); g.fillCircle(cx, cy, r * k);
-      g.lineStyle(4, 0xffffff, pressed ? 0.95 : 0.55); g.strokeCircle(cx, cy, r * k);
+      g.fillStyle(0x000000, 0.18); g.fillCircle(cx, cy + 4, r * k);
+      g.fillStyle(col, pressed ? 0.9 : 0.5); g.fillCircle(cx, cy, r * k);
+      g.lineStyle(3, 0xffffff, pressed ? 0.95 : 0.5); g.strokeCircle(cx, cy, r * k);
       icon(cx, cy, r * k);
     };
     const bars = (cx, cy, r) => { g.fillStyle(0xffffff, 0.95); g.fillRoundedRect(cx - r * 0.38, cy - r * 0.3, r * 0.76, r * 0.18, 3); g.fillRoundedRect(cx - r * 0.38, cy, r * 0.76, r * 0.18, 3); };
@@ -744,17 +759,17 @@ class RaceScene extends Phaser.Scene {
     };
     const gasOn = this.held('GAS') || this.ctl.gas, brOn = this.held('BR') || this.ctl.brake;
     const lbOn = this.held('LB') || this.ctl.lb || inp.lean < -0.2, lfOn = this.held('LF') || this.ctl.lf || inp.lean > 0.2;
-    btn(W - 112, H - 98, 84, gasOn, 0x1fa05a, (cx, cy, r) => {
+    btn(W - 92, H - 86, 66, gasOn, 0x1fa05a, (cx, cy, r) => {
       g.fillStyle(0x0e5a31, 1); g.fillRoundedRect(cx - r * 0.5, cy - r * 0.62, r, r * 1.24, 12);
       g.fillStyle(0xffffff, 0.95); g.fillTriangle(cx, cy - r * 0.42, cx - r * 0.3, cy + r * 0.02, cx + r * 0.3, cy + r * 0.02);
       g.fillRect(cx - r * 0.1, cy, r * 0.2, r * 0.36);
     });
-    btn(W - 290, H - 80, 60, brOn, 0xc23b2b, bars);
-    btn(112, H - 98, 84, lbOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, true));
-    btn(290, H - 80, 60, lfOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, false));
+    btn(W - 222, H - 62, 46, brOn, 0xc23b2b, bars);
+    btn(92, H - 86, 66, lbOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, true));
+    btn(222, H - 62, 46, lfOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, false));
     if (!this.labels) {
       const t = (x, y, s) => this.add.text(x, y, s, { fontFamily: 'Arial', fontStyle: 'bold', fontSize: '15px', color: '#fff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0).setDepth(52);
-      this.labels = [t(W - 112, H - 10, 'ГАЗ'), t(W - 290, H - 10, 'ТОРМОЗ'), t(112, H - 10, 'НАКЛОН НАЗАД'), t(290, H - 10, 'ВПЕРЁД')];
+      this.labels = [t(W - 92, H - 8, 'ГАЗ'), t(W - 222, H - 8, 'ТОРМОЗ'), t(92, H - 8, 'НАЗАД'), t(222, H - 8, 'ВПЕРЁД')];
     }
     const wx = W / 2, wy = 62, gg = this.hudG; gg.clear();
     gg.lineStyle(7, 0x000000, 0.35); gg.strokeCircle(wx, wy, 24);
