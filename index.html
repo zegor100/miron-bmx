@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Мирон BMX">
+<meta name="theme-color" content="#2e8b7a">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>Мирон BMX</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #14201f; overflow: hidden; color: #fff;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; overscroll-behavior: none; font-family: Arial, sans-serif; }
+  #game { position: fixed; inset: 0; }
+  #rot { display: none; position: fixed; inset: 0; z-index: 30; background: #14201f; color: #fff;
+    font: bold 22px Arial, sans-serif; align-items: center; justify-content: center; text-align: center; padding: 24px; }
+  @media (orientation: portrait) { #rot { display: flex; } }
+  #start { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 30%, #2fb7ad 0%, #17605c 55%, #0c2c2b 100%); text-align: center; gap: 10px; padding: 12px; }
+  #start h1 { margin: 0; font-size: clamp(34px, 9vh, 64px); letter-spacing: 1px; text-shadow: 0 4px 0 #0a3b38; }
+  #start h1 b { color: #ff7a1a; }
+  #start p { margin: 0; font-size: clamp(14px, 3.6vh, 20px); max-width: 560px; line-height: 1.35; color: #d8fffb; }
+  .btn { font: bold clamp(20px, 5vh, 30px) Arial, sans-serif; color: #fff; background: #ff6b2c; border: 0; border-radius: 40px;
+    padding: 12px 46px; box-shadow: 0 6px 0 #a83f12; cursor: pointer; touch-action: manipulation; }
+  .btn:active { transform: translateY(3px); box-shadow: 0 3px 0 #a83f12; }
+  .btn.ghost { background: transparent; box-shadow: none; font-size: 16px; color: #bfeee9; text-decoration: underline; padding: 6px; }
+  #calib { font-size: clamp(20px, 5.5vh, 30px); font-weight: bold; color: #ffe14d; min-height: 1.3em; }
+  #bar { width: min(420px, 70vw); height: 14px; background: #0c2c2b; border-radius: 9px; overflow: hidden; display: none; }
+  #bar i { display: block; height: 100%; width: 50%; background: #ffe14d; }
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="rot">Поверни телефон горизонтально 📱↔️</div>
+<div id="start">
+  <h1>МИРОН <b>BMX</b></h1>
+  <p id="intro">Справа газ и тормоз, слева наклон байка назад и вперёд.<br>В воздухе крути сальто! Телефон можно наклонять, как руль.</p>
+  <div id="calib"></div>
+  <div id="bar"><i></i></div>
+  <button class="btn" id="go">ПОЕХАЛИ!</button>
+  <button class="btn ghost" id="skip">без наклона, только кнопки</button>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
+<script>
+// ======================= НАСТРОЙКИ =======================
+const W = 960, H = 540;
+const STEP = 1000 / 60;
+const WHEEL_R = 20, HALF_BASE = 38;
+const AIR_SPIN = 0.22;                 // рад за шаг при полном наклоне
+const CRUISE = 3.6;                    // скорость, ниже которой байк подталкивает сам
+const BASE_CAP = 8.4;                  // скорость на газу, px за шаг
+const MEDAL_TIMES = [48, 62, 80];      // золото / серебро / бронза, секунды
+
+// ======================= ТРАССА =======================
+function rollers(P, x, n, wl, amp, base) {
+  for (let i = 0; i < n; i++) { P.push([x + wl * i + wl / 2, base - amp]); P.push([x + wl * (i + 1), base]); }
+  return x + wl * n;
+}
+function makeLevel1() {
+  const P = [[-400, 380], [0, 380], [250, 380], [450, 410], [700, 500], [900, 590], [1050, 600]];
+  rollers(P, 1050, 6, 300, 45, 600);
+  P.push([3000, 605], [3150, 625], [3300, 640], [3450, 625], [3560, 590], [3650, 560], [3710, 535],
+         [3780, 550], [3900, 570], [4050, 600], [4800, 600]);
+  P.push([4950, 585], [5050, 540], [5130, 492], [5185, 452], [5200, 446], [5214, 474],
+         [5250, 545], [5290, 605], [5340, 635], [5430, 640], [5520, 610], [5600, 600], [5800, 600]);
+  rollers(P, 5800, 8, 260, 40, 600);
+  P.push([8030, 615], [8200, 640], [8400, 650], [8600, 640], [8730, 605], [8830, 575], [8900, 545],
+         [8980, 570], [9120, 590], [9300, 600], [9800, 600]);
+  rollers(P, 9800, 8, 280, 42, 600);
+  P.push([12140, 600], [12240, 552], [12320, 508], [12338, 502], [12352, 530], [12420, 615], [12480, 640], [12580, 640], [12670, 610], [12740, 600],
+         [12940, 600], [13040, 550], [13120, 504], [13138, 498], [13152, 528], [13220, 615], [13280, 640], [13380, 640], [13470, 610], [13540, 600],
+         [14840, 600]);
+  return {
+    name: 'Памп-трек в парке', points: P,
+    wood: [[4800, 5200], [12140, 12338], [12940, 13138]],
+    concrete: [[3000, 3710], [8030, 8900]],
+    checkpoints: [0, 2850, 5800, 8030, 9800, 12040],
+    finishX: 13740, startX: 120
+  };
+}
+const LEVEL = makeLevel1();
+
+// ======================= РЕЛЬЕФ =======================
+function makeHeightfield(points, step) {
+  const n = points.length, xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+  const d = [], m = [];
+  for (let i = 0; i < n - 1; i++) d[i] = (ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]);
+  m[0] = d[0]; m[n - 1] = d[n - 2];
+  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+    const a = m[i] / d[i], b = m[i + 1] / d[i], s = a * a + b * b;
+    if (s > 9) { const t = 3 / Math.sqrt(s); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+  }
+  const out = []; let k = 0;
+  for (let x = xs[0]; x <= xs[n - 1]; x += step) {
+    while (k < n - 2 && x > xs[k + 1]) k++;
+    const h = xs[k + 1] - xs[k], t = (x - xs[k]) / h, t2 = t * t, t3 = t2 * t;
+    out.push((2 * t3 - 3 * t2 + 1) * ys[k] + (t3 - 2 * t2 + t) * h * m[k] + (-2 * t3 + 3 * t2) * ys[k + 1] + (t3 - t2) * h * m[k + 1]);
+  }
+  return { x0: xs[0], step, ys: out };
+}
+const HF = makeHeightfield(LEVEL.points, 10);
+function groundY(x) {
+  let f = (x - HF.x0) / HF.step;
+  f = Math.max(0, Math.min(HF.ys.length - 1.001, f));
+  const i = Math.floor(f), t = f - i;
+  return HF.ys[i] * (1 - t) + HF.ys[i + 1] * t;
+}
+function slopeAt(x) { return Math.atan2(groundY(x + 8) - groundY(x - 8), 16); }
+
+// ======================= ЗВУК (простой синтезатор) =======================
+const Sfx = {
+  ctx: null,
+  init() { try { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); } catch (e) { this.ctx = null; } },
+  tone(f, d, type, vol, slideTo) {
+    const c = this.ctx; if (!c) return;
+    try {
+      const o = c.createOscillator(), g = c.createGain(), t = c.currentTime;
+      o.type = type || 'sine'; o.frequency.setValueAtTime(f, t);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + d);
+      g.gain.setValueAtTime(vol || 0.1, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + d + 0.02);
+    } catch (e) { /* без звука */ }
+  },
+  noise(d, vol) {
+    const c = this.ctx; if (!c) return;
+    try {
+      const len = Math.floor(c.sampleRate * d), buf = c.createBuffer(1, len, c.sampleRate), data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      const s = c.createBufferSource(), g = c.createGain(); s.buffer = buf; g.gain.value = vol || 0.15;
+      s.connect(g); g.connect(c.destination); s.start();
+    } catch (e) { /* без звука */ }
+  },
+  pedal(c) { this.tone(260 + c * 380, 0.05, 'triangle', 0.07); },
+  land() { this.noise(0.12, 0.12); this.tone(110, 0.12, 'sine', 0.15, 60); },
+  flip() { [520, 660, 780, 1040].forEach((f, i) => setTimeout(() => this.tone(f, 0.16, 'square', 0.06), i * 70)); },
+  perfect() { this.tone(400, 0.25, 'sawtooth', 0.07, 1200); },
+  crash() { this.noise(0.35, 0.25); this.tone(160, 0.3, 'sawtooth', 0.12, 50); },
+  check() { this.tone(880, 0.12, 'triangle', 0.1); setTimeout(() => this.tone(1320, 0.18, 'triangle', 0.1), 110); },
+  fanfare() { [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => setTimeout(() => this.tone(f, 0.28, 'triangle', 0.12), i * 130)); }
+};
+
+// ======================= НАКЛОН ТЕЛЕФОНА =======================
+// Крен вокруг оси экрана считаем по направлению силы тяжести; знак определяет калибровка («наклони вправо»).
+const Tilt = {
+  on: false, raw: 0, prev: null, smooth: undefined, sign: 1, base: 0,
+  handler(e) {
+    const a = e.accelerationIncludingGravity;
+    if (!a || a.x == null || a.y == null) return;
+    if (Math.hypot(a.x, a.y) < 2) return;      // телефон лежит экраном вверх: крен не определить
+    const psi = Math.atan2(a.x, a.y) * 180 / Math.PI;
+    if (Tilt.prev === null) Tilt.prev = psi;
+    let d = psi - Tilt.prev; while (d > 180) d -= 360; while (d < -180) d += 360;
+    Tilt.prev = psi; Tilt.raw += d;
+    Tilt.smooth = Tilt.smooth === undefined ? Tilt.raw : Tilt.smooth + (Tilt.raw - Tilt.smooth) * 0.35;
+  },
+  val() { return Tilt.on && Tilt.smooth !== undefined ? Tilt.sign * (Tilt.smooth - Tilt.base) : 0; },
+  async enable() {
+    try {
+      if (typeof DeviceMotionEvent === 'undefined') return false;
+      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        const r = await DeviceMotionEvent.requestPermission();
+        if (r !== 'granted') return false;
+      }
+      window.addEventListener('devicemotion', Tilt.handler);
+      Tilt.on = true; return true;
+    } catch (e) { return false; }
+  }
+};
+
+// ======================= РИСОВАНИЕ ГЕРОЯ =======================
+function line(g, w, color, x1, y1, x2, y2) { g.lineStyle(w, color, 1); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath(); }
+function ik(hx, hy, fx, fy, l1, l2, dir) {  // колено/локоть по двум звеньям
+  const dx = fx - hx, dy = fy - hy; let d = Math.hypot(dx, dy);
+  d = Math.max(4, Math.min(d, l1 + l2 - 0.5)); const base = Math.atan2(dy, dx);
+  const A = Math.acos(Phaser.Math.Clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1));
+  const a = base - dir * A;
+  return { x: hx + Math.cos(a) * l1, y: hy + Math.sin(a) * l1 };
+}
+function drawWheel(g) {
+  g.clear();
+  g.lineStyle(6, 0x15151a, 1); g.strokeCircle(0, 0, WHEEL_R - 2);
+  g.lineStyle(1, 0xb8bcc4, 1);
+  for (let a = 0; a < 8; a++) { const r = a * Math.PI / 8; g.beginPath(); g.moveTo(Math.cos(r) * 17, Math.sin(r) * 17); g.lineTo(-Math.cos(r) * 17, -Math.sin(r) * 17); g.strokePath(); }
+  g.lineStyle(2, 0x777b84, 1); g.strokeCircle(0, 0, 16);
+  g.fillStyle(0xff7a1a, 1); g.fillCircle(0, 0, 3.5);
+}
+function drawFrame(g) {
+  g.clear();
+  const grey = 0x8a8f96, dark = 0x5d6269;
+  line(g, 5, dark, -38, 0, -2, 6); line(g, 5, grey, -2, 6, -16, -30); line(g, 5, grey, -16, -29, 28, -30);
+  line(g, 6, grey, -2, 6, 28, -27); line(g, 2, 0xff7a1a, -1, 4, 26, -25); line(g, 4, grey, 30, -28, 38, 0);
+  line(g, 3, 0x222222, 28, -30, 26, -42); line(g, 5, 0x222222, 18, -46, 34, -44);
+  g.fillStyle(0x222222, 1); g.fillRect(-22, -34, 16, 4); g.fillStyle(0xff7a1a, 1); g.fillRect(-20, -36, 10, 3);
+  g.fillStyle(0xffffff, 1); g.fillRoundedRect(28, -40, 16, 12, 2);
+  g.fillStyle(0x444a52, 1); g.fillCircle(-2, 6, 6); g.fillStyle(0x9aa0a8, 1); g.fillCircle(-2, 6, 3);
+}
+// динамический мальчик: педалирует, приседает, наклоняется
+function drawRiderDyn(g, crank, crouch, lean) {
+  g.clear();
+  const black = 0x1d1d22, teal = 0x25b8b0, tealD = 0x1a8a84, orange = 0xff6b2c, red = 0xd62828;
+  const bbx = -2, bby = 6, R = 10;
+  const p1 = { x: bbx + Math.cos(crank) * R, y: bby + Math.sin(crank) * R };
+  const p2 = { x: bbx - Math.cos(crank) * R, y: bby - Math.sin(crank) * R };
+  const hip = { x: -12 - crouch * 4 + lean * 3, y: -44 + crouch * 13 };
+  const sh = { x: hip.x + 15 + crouch * 7 + lean * 4, y: hip.y - 24 + crouch * 6 };
+  const head = { x: sh.x + 7, y: sh.y - 12 };
+  line(g, 3, 0x555a62, bbx, bby, p1.x, p1.y); line(g, 3, 0x555a62, bbx, bby, p2.x, p2.y);
+  const pedal = p => { g.fillStyle(red, 1); g.fillRoundedRect(p.x - 6, p.y - 2, 12, 4, 1); };
+  // дальняя нога (темнее)
+  const kFar = ik(hip.x, hip.y, p2.x, p2.y - 3, 25, 28, 1);
+  pedal(p2);
+  line(g, 8, 0x111114, hip.x, hip.y, kFar.x, kFar.y); line(g, 7, 0x111114, kFar.x, kFar.y, p2.x, p2.y - 3);
+  g.fillStyle(0x333333, 1); g.fillRoundedRect(p2.x - 5, p2.y - 7, 12, 6, 2);
+  // дальняя рука
+  const grip = { x: 30, y: -44 };
+  const eFar = ik(sh.x, sh.y, grip.x - 1, grip.y, 17, 18, -1);
+  line(g, 6, tealD, sh.x, sh.y, eFar.x, eFar.y); line(g, 5, tealD, eFar.x, eFar.y, grip.x - 1, grip.y);
+  // туловище
+  line(g, 17, teal, hip.x, hip.y, sh.x, sh.y);
+  line(g, 5, orange, hip.x + 5, hip.y - 6, sh.x + 2, sh.y + 2);
+  g.fillStyle(0xffffff, 1); g.fillRect((hip.x + sh.x) / 2 - 1, (hip.y + sh.y) / 2 - 1, 5, 3);
+  g.fillStyle(red, 1); g.fillRect((hip.x + sh.x) / 2 - 1, (hip.y + sh.y) / 2 + 2, 5, 2);
+  // ближняя нога
+  const kNear = ik(hip.x, hip.y, p1.x, p1.y - 3, 25, 28, 1);
+  line(g, 9, black, hip.x, hip.y, kNear.x, kNear.y); line(g, 8, black, kNear.x, kNear.y, p1.x, p1.y - 3);
+  g.fillStyle(0x3a424d, 1); g.fillCircle(kNear.x, kNear.y, 5.5);
+  g.fillStyle(orange, 1); g.fillRoundedRect(p1.x - 6, p1.y - 8, 13, 6, 2);
+  pedal(p1);
+  // ближняя рука и перчатка
+  const eNear = ik(sh.x, sh.y, grip.x, grip.y, 17, 18, -1);
+  line(g, 7, teal, sh.x, sh.y, eNear.x, eNear.y); line(g, 6, teal, eNear.x, eNear.y, grip.x, grip.y);
+  g.fillStyle(orange, 1); g.fillCircle(grip.x + 1, grip.y, 5);
+  // шлем
+  g.fillStyle(red, 1); g.fillCircle(head.x, head.y, 13);
+  g.fillStyle(0xffffff, 1); g.fillRect(head.x - 8, head.y - 10, 17, 4);
+  g.fillTriangle(head.x - 12, head.y - 2, head.x - 4, head.y - 9, head.x - 4, head.y + 2);
+  g.fillStyle(0x2b6fd6, 1); g.fillRect(head.x - 14, head.y - 1, 5, 10);
+  g.fillStyle(0xf2c9a0, 1); g.fillRoundedRect(head.x + 3, head.y - 2, 11, 9, 3);
+  g.fillStyle(0x222222, 1); g.fillRect(head.x + 3, head.y - 5, 14, 3);
+  g.fillStyle(0x111111, 1); g.fillCircle(head.x + 9, head.y + 2, 1.2);
+}
+function drawBoyStanding(g, x, y) {
+  g.fillStyle(0x1d1d22, 1); g.fillRect(x - 9, y - 26, 8, 26); g.fillRect(x + 1, y - 26, 8, 26);
+  g.fillStyle(0x25b8b0, 1); g.fillRoundedRect(x - 12, y - 56, 24, 32, 5);
+  g.fillStyle(0xff6b2c, 1); g.fillRect(x - 12, y - 40, 24, 4);
+  line(g, 7, 0x25b8b0, x - 12, y - 52, x - 22, y - 74); line(g, 7, 0x25b8b0, x + 12, y - 52, x + 22, y - 74);
+  g.fillStyle(0xff6b2c, 1); g.fillCircle(x - 23, y - 77, 5); g.fillCircle(x + 23, y - 77, 5);
+  g.fillStyle(0xd62828, 1); g.fillCircle(x, y - 68, 14);
+  g.fillStyle(0xffffff, 1); g.fillRect(x - 10, y - 79, 20, 4);
+  g.fillStyle(0xf2c9a0, 1); g.fillRoundedRect(x - 8, y - 68, 16, 9, 3);
+  g.fillStyle(0x111111, 1); g.fillCircle(x - 3, y - 64, 1.3); g.fillCircle(x + 3, y - 64, 1.3);
+}
+
+// ======================= СОХРАНЕНИЕ =======================
+const SAVE_KEY = 'miron_bmx_loc1';
+function loadBest() { try { const s = localStorage.getItem(SAVE_KEY); return s ? JSON.parse(s) : { time: null, score: 0 }; } catch (e) { return { time: null, score: 0 }; } }
+function saveBest(b) { try { localStorage.setItem(SAVE_KEY, JSON.stringify(b)); } catch (e) { /* без сохранения */ } }
+function fmt(t) { const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1); }
+
+// ======================= СЦЕНА =======================
+class RaceScene extends Phaser.Scene {
+  constructor() { super('race'); }
+
+  create() {
+    const M = Phaser.Physics.Matter.Matter; this.M = M;
+    this.matter.world.autoUpdate = false;
+    this.matter.world.setGravity(0, 1);
+    this.acc = 0; this.slow = 1; this.wantSlow = false;
+    this.best = loadBest();
+    this.input.addPointer(4);
+    this.ctl = { held: {}, gas: false, brake: false, lb: false, lf: false, force: null };
+    this.setupInput();
+    this.parts = [];
+    this.buildBackground();
+    this.buildTerrain();
+    this.buildBike();
+    this.buildHud();
+
+    this.state = 'wait';      // wait (стартовый экран) → ready → run → crash → finish → done
+    this.time_ = 0; this.score = 0; this.flips = 0; this.combo = 0; this.comboT = 0;
+    this.checkpoint = 0; this.cpIndex = 0;
+    this.airTicks = 0; this.airRot = 0; this.lastAngle = 0; this.wasAir = false; this.crashTimer = 0; this.lastAir = 0;
+    this.boost = 0; this.wheelieT = 0;
+    this.crouchVis = 0; this.tiltVis = 0; this.shake = 0; this.neutral = 0; this.tickN = 0;
+
+    this.camTarget = this.add.rectangle(LEVEL.startX, LEVEL.points[3][1], 4, 4, 0, 0);
+    this.cameras.main.startFollow(this.camTarget, true, 0.12, 0.08, -150, 70);
+    this.cameras.main.setBackgroundColor(0x9edcf2);
+    this.placeBike(LEVEL.startX, 0);
+    window.G = this;
+    if (window.__autostart) { window.__autostart = false; this.begin(); }
+  }
+
+  // ---------- ввод ----------
+  // Справа: ГАЗ (большая педаль) и ТОРМОЗ. Слева: наклон байка назад / вперёд. Плюс наклон телефона.
+  setupInput() {
+    const brakeC = { x: W - 290, y: H - 80 }, fwdC = { x: 290, y: H - 80 };
+    const hit = (x, y) => {
+      if (x >= W / 2) return Math.hypot(x - brakeC.x, y - brakeC.y) < 85 ? 'BR' : 'GAS';
+      return Math.hypot(x - fwdC.x, y - fwdC.y) < 85 ? 'LF' : 'LB';
+    };
+    this.input.on('pointerdown', p => { Sfx.init(); this.ctl.held[p.id] = hit(p.x, p.y); });
+    this.input.on('pointermove', p => { if (p.isDown && this.ctl.held[p.id] !== undefined) this.ctl.held[p.id] = hit(p.x, p.y); });
+    this.input.on('pointerup', p => { delete this.ctl.held[p.id]; });
+    this.input.on('pointerupoutside', p => { delete this.ctl.held[p.id]; });
+    const kb = this.input.keyboard, set = (names, key, v) => names.forEach(n => kb.on((v ? 'keydown-' : 'keyup-') + n, () => { Sfx.init(); this.ctl[key] = v; }));
+    [[['RIGHT', 'D'], 'gas'], [['LEFT', 'A'], 'brake'], [['UP', 'W'], 'lb'], [['DOWN', 'S'], 'lf']].forEach(([names, key]) => { set(names, key, true); set(names, key, false); });
+  }
+  held(name) { return Object.values(this.ctl.held).includes(name); }
+  readInput() {
+    const c = this.ctl;
+    if (c.force) return c.force;
+    let lean = 0;
+    if (c.lb || this.held('LB')) lean -= 1;
+    if (c.lf || this.held('LF')) lean += 1;
+    if (lean === 0 && Tilt.on) {
+      const eff = Tilt.val() - this.neutral, dz = 6;
+      if (Math.abs(eff) > dz) lean = Phaser.Math.Clamp((Math.abs(eff) - dz) / 20, 0, 1) * Math.sign(eff);
+    }
+    return { gas: !!(c.gas || this.held('GAS')), brake: !!(c.brake || this.held('BR')), lean };
+  }
+
+  // ---------- фон ----------
+  buildBackground() {
+    const sky = this.add.graphics().setScrollFactor(0).setDepth(-100);
+    const bands = 24;
+    for (let i = 0; i < bands; i++) {
+      const t = i / (bands - 1);
+      const c = Phaser.Display.Color.Interpolate.ColorWithColor(new Phaser.Display.Color(86, 170, 232), new Phaser.Display.Color(255, 226, 190), 100, Math.round(t * 100));
+      sky.fillStyle(Phaser.Display.Color.GetColor(c.r, c.g, c.b), 1); sky.fillRect(0, i * H / bands, W, H / bands + 1);
+    }
+    const sun = this.add.graphics().setScrollFactor(0).setDepth(-99);
+    for (let r = 150; r > 20; r -= 14) { sun.fillStyle(0xfff3b0, 0.05 + (150 - r) / 1400); sun.fillCircle(780, 120, r); }
+    sun.fillStyle(0xfffbe0, 1); sun.fillCircle(780, 120, 34);
+    const clouds = this.add.graphics().setScrollFactor(0.1, 0.1).setDepth(-95);
+    for (let i = 0; i < 16; i++) {
+      const cx = i * 300 + 60, cy = 60 + (i * 53) % 140;
+      clouds.fillStyle(0xffffff, 0.85); clouds.fillEllipse(cx, cy, 150, 36); clouds.fillEllipse(cx + 36, cy - 14, 95, 34); clouds.fillEllipse(cx - 40, cy - 6, 80, 28);
+    }
+    this.hills(0.15, 0.3, 380, 70, 0x8fc7a9, 0.011, 3, -92);
+    this.hills(0.3, 0.45, 430, 60, 0x6fb08e, 0.017, 7, -91);
+    this.drawTrees(0.45, 0.55, 600, 130, 0x4c9a52, 0x3f8a48, 0x2f7239, 11, -90);
+    this.drawTrees(0.7, 0.8, 640, 190, 0x3c8a45, 0x2d6e37, 0x215a2c, 23, -80);
+    const dec = this.add.graphics().setDepth(-5);
+    for (let x = 300; x < LEVEL.finishX + 800; x += 640) {
+      const y = groundY(x);
+      dec.fillStyle(0x3a4046, 1); dec.fillRect(x - 3, y - 170, 6, 170); dec.fillRect(x - 3, y - 170, 30, 5);
+      dec.fillStyle(0xfff2a8, 1); dec.fillCircle(x + 26, y - 162, 7);
+    }
+    for (let x = 640; x < LEVEL.finishX + 800; x += 1320) {
+      const y = groundY(x);
+      dec.fillStyle(0x7a5230, 1); dec.fillRect(x - 28, y - 30, 56, 7); dec.fillRect(x - 28, y - 52, 56, 6); dec.fillRect(x - 24, y - 30, 5, 30); dec.fillRect(x + 20, y - 30, 5, 30);
+    }
+  }
+  hills(sfx, sfy, baseY, amp, color, freq, seed, depth) {
+    const g = this.add.graphics().setScrollFactor(sfx, sfy).setDepth(depth);
+    g.fillStyle(color, 1);
+    const total = LEVEL.finishX * sfx + 2200;
+    for (let x = -300; x < total; x += 8) {
+      const y = baseY - amp * (0.55 + 0.45 * Math.sin(x * freq + seed)) - amp * 0.3 * Math.sin(x * freq * 2.3 + seed * 2);
+      g.fillRect(x, y, 9, 900);
+    }
+  }
+  drawTrees(sfx, sfy, baseY, size, c1, c2, c3, seed, depth) {
+    const g = this.add.graphics().setScrollFactor(sfx, sfy).setDepth(depth);
+    let s = seed;
+    const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    const total = LEVEL.finishX * sfx + 2200;
+    for (let x = -300; x < total; x += 100 + rnd() * 100) {
+      const h = size * (0.8 + rnd() * 0.5), cx = x, cy = baseY - h * 0.75, r = h * 0.34;
+      g.fillStyle(0x5a3d25, 1); g.fillRect(cx - 6, baseY - h * 0.55, 12, h * 0.55);
+      g.fillStyle(c3, 1); g.fillCircle(cx + 3, cy + 6, r * 1.02); g.fillCircle(cx - h * 0.2 + 3, cy + h * 0.2 + 6, r * 0.75); g.fillCircle(cx + h * 0.2 + 3, cy + h * 0.2 + 6, r * 0.75);
+      g.fillStyle(rnd() > 0.5 ? c1 : c2, 1); g.fillCircle(cx, cy, r); g.fillCircle(cx - h * 0.2, cy + h * 0.2, r * 0.75); g.fillCircle(cx + h * 0.2, cy + h * 0.2, r * 0.75);
+      g.fillStyle(0xffffff, 0.12); g.fillCircle(cx - r * 0.3, cy - r * 0.35, r * 0.45);
+    }
+  }
+
+  // ---------- рельеф ----------
+  buildTerrain() {
+    const M = this.M, g = this.add.graphics().setDepth(0);
+    const inR = (x, r) => r.some(a => x >= a[0] && x <= a[1]);
+    const colorAt = x => inR(x, LEVEL.wood) ? [0xc98f4a, 0x8a5a26, 0xe0a85f] : inR(x, LEVEL.concrete) ? [0xb3b7bd, 0x7d8189, 0xd5d8dd] : [0xb27a4e, 0x5f9442, 0xc9935f];
+    const bottom = 1400, n = HF.ys.length;
+    for (let i = 0; i < n - 1; i++) {
+      const x = HF.x0 + i * HF.step, c = colorAt(x), y1 = HF.ys[i], y2 = HF.ys[i + 1], xe = x + HF.step + 0.6;
+      g.fillStyle(c[0], 1); g.fillPoints([{ x, y: y1 }, { x: xe, y: y2 }, { x: xe, y: bottom }, { x, y: bottom }], true);
+      g.fillStyle(c[2], 0.55); g.fillPoints([{ x, y: y1 + 6 }, { x: xe, y: y2 + 6 }, { x: xe, y: y2 + 20 }, { x, y: y1 + 20 }], true);
+      g.fillStyle(0x000000, 0.2); g.fillPoints([{ x, y: y1 + 110 }, { x: xe, y: y2 + 110 }, { x: xe, y: bottom }, { x, y: bottom }], true);
+    }
+    for (let i = 0; i < n - 1; i++) {
+      const x = HF.x0 + i * HF.step, c = colorAt(x);
+      g.lineStyle(8, c[1], 1); g.beginPath(); g.moveTo(x, HF.ys[i] - 1); g.lineTo(x + HF.step, HF.ys[i + 1] - 1); g.strokePath();
+    }
+    let s = 5; const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    for (let x = HF.x0 + 20; x < HF.x0 + (n - 1) * HF.step; x += 22 + rnd() * 30) {
+      const c = colorAt(x), y = groundY(x);
+      if (c[0] === 0xb27a4e) { g.lineStyle(2, 0x4c8a37, 1); for (let k = -1; k <= 1; k++) { g.beginPath(); g.moveTo(x + k * 3, y); g.lineTo(x + k * 5, y - 7 - rnd() * 6); g.strokePath(); } }
+      if (rnd() > 0.7) { g.fillStyle(0x8a5e3a, 1); g.fillCircle(x + 5, y + 18 + rnd() * 40, 2 + rnd() * 3); }
+    }
+    LEVEL.wood.forEach(r => { for (let x = r[0]; x < r[1]; x += 22) { g.lineStyle(2, 0x7a4c1e, 0.8); g.beginPath(); g.moveTo(x, groundY(x) + 3); g.lineTo(x, groundY(x) + 24); g.strokePath(); } });
+    for (let i = 0; i < n - 1; i++) {
+      const x1 = HF.x0 + i * HF.step, y1 = HF.ys[i], x2 = x1 + HF.step, y2 = HF.ys[i + 1];
+      const len = Math.hypot(x2 - x1, y2 - y1), ang = Math.atan2(y2 - y1, x2 - x1);
+      const nx = -Math.sin(ang), ny = Math.cos(ang);
+      const body = M.Bodies.rectangle((x1 + x2) / 2 + nx * 30, (y1 + y2) / 2 + ny * 30, len + 3, 60, { isStatic: true, angle: ang, friction: 1, frictionStatic: 1, restitution: 0, label: 'ground' });
+      this.matter.world.add(body);
+    }
+    const fx = LEVEL.finishX, fy = groundY(fx), f = this.add.graphics().setDepth(1);
+    f.fillStyle(0x30363c, 1); f.fillRect(fx - 8, fy - 200, 10, 200); f.fillRect(fx + 150, fy - 200, 10, 200);
+    for (let i = 0; i < 19; i++) for (let j = 0; j < 3; j++) { f.fillStyle((i + j) % 2 ? 0x111111 : 0xffffff, 1); f.fillRect(fx + i * 8 + 2, fy - 200 + j * 14, 8, 14); }
+    this.add.text(fx + 78, fy - 245, 'ФИНИШ', { fontFamily: 'Arial', fontStyle: 'bold', fontSize: '38px', color: '#fff', stroke: '#000', strokeThickness: 6 }).setOrigin(0.5).setDepth(1);
+    LEVEL.checkpoints.slice(1).forEach(cx => { const cy = groundY(cx); f.fillStyle(0x30363c, 1); f.fillRect(cx, cy - 90, 4, 90); f.fillStyle(0xffd23f, 1); f.fillTriangle(cx + 4, cy - 90, cx + 4, cy - 66, cx + 38, cy - 78); });
+    const sy = groundY(LEVEL.startX);
+    f.fillStyle(0x30363c, 1); f.fillRect(LEVEL.startX - 120, sy - 150, 8, 150); f.fillRect(LEVEL.startX + 80, sy - 150, 8, 150);
+    f.fillStyle(0x1f6f4d, 1); f.fillRoundedRect(LEVEL.startX - 130, sy - 190, 230, 52, 8);
+    this.add.text(LEVEL.startX - 15, sy - 164, 'ПАМП-ТРЕК', { fontFamily: 'Arial', fontStyle: 'bold', fontSize: '30px', color: '#fff' }).setOrigin(0.5).setDepth(1);
+  }
+
+  // ---------- байк (рама + два колеса на шарнирах, как в Hill Climb Racing) ----------
+  buildBike() {
+    const M = this.M, B = M.Bodies, Body = M.Body, filt = { group: -7 };
+    const wopt = (label) => ({ label, friction: 1, frictionStatic: 1, restitution: 0, density: 0.0028, frictionAir: 0.0004, collisionFilter: filt });
+    this.wr = B.circle(-HALF_BASE, 0, WHEEL_R, wopt('wheel'));
+    this.wf = B.circle(HALF_BASE, 0, WHEEL_R, wopt('wheel'));
+    const frame = B.rectangle(0, -12, 74, 14, { label: 'frame', density: 0.004, friction: 0.05, restitution: 0, collisionFilter: filt });
+    const head = B.circle(14, -82, 10, { label: 'head', isSensor: true, density: 0.0003, collisionFilter: filt });
+    const hips = B.circle(-10, -44, 9, { label: 'hips', isSensor: true, density: 0.0003, collisionFilter: filt });
+    this.bike = Body.create({ parts: [frame, head, hips], frictionAir: 0.002, restitution: 0, label: 'bike', collisionFilter: filt });
+    this.anchorOff = { x: -this.bike.position.x, y: -this.bike.position.y };
+    const pin = (wheel, lx) => M.Constraint.create({ bodyA: this.bike, pointA: { x: lx + this.anchorOff.x, y: this.anchorOff.y }, bodyB: wheel, pointB: { x: 0, y: 0 }, length: 0, stiffness: 0.95, damping: 0.1 });
+    this.matter.world.add([this.bike, this.wr, this.wf, pin(this.wr, -HALF_BASE), pin(this.wf, HALF_BASE)]);
+    this.shadow = this.add.ellipse(0, 0, 110, 12, 0x000000, 0.25).setDepth(2);
+    this.trail = this.add.graphics().setDepth(3);
+    this.trailPts = [];
+    this.wheelR = this.add.graphics().setDepth(5); drawWheel(this.wheelR);
+    this.wheelF = this.add.graphics().setDepth(5); drawWheel(this.wheelF);
+    this.frameG = this.add.graphics(); drawFrame(this.frameG);
+    this.riderG = this.add.graphics();
+    this.plate = this.add.text(36, -34, '97', { fontFamily: 'Arial', fontStyle: 'bold', fontSize: '11px', color: '#111' }).setOrigin(0.5);
+    this.bikeC = this.add.container(0, 0, [this.frameG, this.riderG, this.plate]).setDepth(5);
+  }
+  anchor() {
+    const b = this.bike, c = Math.cos(b.angle), s = Math.sin(b.angle);
+    return { x: b.position.x + c * this.anchorOff.x - s * this.anchorOff.y, y: b.position.y + s * this.anchorOff.x + c * this.anchorOff.y };
+  }
+  local(lx, ly) {
+    const a = this.anchor(), c = Math.cos(this.bike.angle), s = Math.sin(this.bike.angle);
+    return { x: a.x + c * lx - s * ly, y: a.y + s * lx + c * ly };
+  }
+  allBodies() { return [this.bike, this.wr, this.wf]; }
+  placeBike(x, speed) {
+    const Body = this.M.Body, sl = slopeAt(x), ay = groundY(x) - WHEEL_R - 6;
+    const c = Math.cos(sl), s = Math.sin(sl);
+    Body.setAngle(this.bike, sl);
+    Body.setPosition(this.bike, { x: x - (c * this.anchorOff.x - s * this.anchorOff.y), y: ay - (s * this.anchorOff.x + c * this.anchorOff.y) });
+    Body.setPosition(this.wr, { x: x - c * HALF_BASE, y: ay - s * HALF_BASE });
+    Body.setPosition(this.wf, { x: x + c * HALF_BASE, y: ay + s * HALF_BASE });
+    this.allBodies().forEach(b => { Body.setVelocity(b, { x: c * speed, y: s * speed }); Body.setAngularVelocity(b, 0); });
+    Body.setAngle(this.wr, 0); Body.setAngle(this.wf, 0);
+    this.lastAngle = this.bike.angle; this.airRot = 0; this.airTicks = 0; this.wasAir = false;
+    this.camTarget.setPosition(x, ay);
+  }
+  setPitch(omega) {   // вращаем всю систему (раму и колёса) вокруг общего центра масс
+    const bs = this.allBodies(); let m = 0, cx = 0, cy = 0;
+    bs.forEach(b => { m += b.mass; cx += b.position.x * b.mass; cy += b.position.y * b.mass; });
+    cx /= m; cy /= m;
+    const dw = omega - this.bike.angularVelocity;
+    bs.forEach(b => this.M.Body.setVelocity(b, { x: b.velocity.x - dw * (b.position.y - cy), y: b.velocity.y + dw * (b.position.x - cx) }));
+    this.M.Body.setAngularVelocity(this.bike, omega);
+  }
+  kick(f) { this.allBodies().forEach(b => this.M.Body.setVelocity(b, { x: b.velocity.x * f, y: b.velocity.y * f })); }
+
+  // ---------- интерфейс ----------
+  buildHud() {
+    const st = (size, color, sw) => ({ fontFamily: 'Arial', fontStyle: 'bold', fontSize: size + 'px', color: color || '#fff', stroke: '#000', strokeThickness: sw === undefined ? 4 : sw });
+    const D = 50;
+    this.hudTime = this.add.text(20, 12, '0:00.0', st(36)).setScrollFactor(0).setDepth(D);
+    this.hudBest = this.add.text(20, 58, this.best.time ? 'Рекорд: ' + fmt(this.best.time) : 'Рекорда ещё нет', st(17, '#ffe9a8')).setScrollFactor(0).setDepth(D);
+    this.hudScore = this.add.text(W - 20, 12, 'Очки: 0', st(30)).setOrigin(1, 0).setScrollFactor(0).setDepth(D);
+    this.hudFlips = this.add.text(W - 20, 48, 'Сальто: 0', st(20, '#bfe9e5')).setOrigin(1, 0).setScrollFactor(0).setDepth(D);
+    this.hudCombo = this.add.text(W - 20, 76, '', st(24, '#ffe14d')).setOrigin(1, 0).setScrollFactor(0).setDepth(D);
+    this.speedG = this.add.graphics().setScrollFactor(0).setDepth(D);
+    this.fx = this.add.graphics().setScrollFactor(0).setDepth(45);
+    this.pedalG = this.add.graphics().setScrollFactor(0).setDepth(D);
+    this.hudG = this.add.graphics().setScrollFactor(0).setDepth(D - 1);
+    this.msg = this.add.text(W / 2, 270, '', Object.assign(st(30), { align: 'center' })).setOrigin(0.5).setScrollFactor(0).setDepth(60).setAlpha(0);
+    this.pop = this.add.text(W / 2, 150, '', st(54, '#ffe14d', 7)).setOrigin(0.5).setScrollFactor(0).setDepth(60).setAlpha(0);
+    this.sub = this.add.text(W / 2, 205, '', st(26, '#ffffff', 5)).setOrigin(0.5).setScrollFactor(0).setDepth(60).setAlpha(0);
+  }
+  popup(text, color, sub) {
+    this.pop.setText(text).setColor(color || '#ffe14d').setAlpha(1).setY(150).setScale(0.4);
+    this.tweens.killTweensOf(this.pop);
+    this.tweens.add({ targets: this.pop, scale: 1.1, duration: 200, ease: 'Back.Out' });
+    this.tweens.add({ targets: this.pop, alpha: 0, y: 105, delay: 1000, duration: 500 });
+    this.sub.setText(sub || '').setAlpha(sub ? 1 : 0);
+    this.tweens.killTweensOf(this.sub);
+    if (sub) this.tweens.add({ targets: this.sub, alpha: 0, delay: 1000, duration: 500 });
+  }
+
+  begin() {   // вызывается после стартового экрана
+    if (this.state !== 'wait') return;
+    this.state = 'ready';
+    this.msg.setText('Держи ГАЗ справа и поехали!').setAlpha(1);
+  }
+
+  // ---------- игровой цикл ----------
+  update(time, delta) {
+    this.slow += ((this.wantSlow ? 0.5 : 1) - this.slow) * 0.1;
+    this.acc += Math.min(delta, 100) * this.slow;
+    if (this.state === 'run') this.time_ += Math.min(delta, 100) / 1000;
+    let guard = 0;
+    while (this.acc >= STEP && guard++ < 6) { this.acc -= STEP; this.tick(); this.matter.world.step(STEP); }
+    this.render();
+  }
+
+  tick() {
+    const M = this.M, Body = M.Body, b = this.bike, wr = this.wr, wf = this.wf;
+    if (this.state === 'done' || this.state === 'wait') return;
+    const inp = this.readInput();
+    if (this.state === 'ready') {
+      if (inp.gas) { this.state = 'run'; this.msg.setAlpha(0); } else return;
+    }
+    const near = w => groundY(w.position.x) - w.position.y <= WHEEL_R / Math.cos(slopeAt(w.position.x)) + 4;
+    const tR = near(wr), tF = near(wf), touching = tR || tF;
+    this.airTicks = touching ? 0 : this.airTicks + 1;
+    const air = this.airTicks > 3;
+    const a = this.anchor(), sl = slopeAt(a.x);
+    const sp0 = Math.hypot(b.velocity.x, b.velocity.y);
+
+    if (this.state === 'crash') { this.crashTimer -= STEP; if (this.crashTimer <= 0) this.respawn(); return; }
+    if (Tilt.on && !air) this.neutral += (Tilt.val() - this.neutral) * 0.02;
+    this.boost *= 0.994; this.comboT = Math.max(0, this.comboT - STEP / 1000);
+    if (this.comboT === 0) this.combo = 0;
+
+    if (this.state === 'run') {
+      // ---- газ и тормоз ----
+      const maxW = (BASE_CAP + this.boost) / WHEEL_R;
+      if (inp.gas) {
+        if (wr.angularVelocity < maxW) Body.setAngularVelocity(wr, Math.min(maxW, wr.angularVelocity + 0.014));
+        if (tR) this.setPitch(b.angularVelocity - 0.0012);
+      }
+      if (inp.brake) {
+        Body.setAngularVelocity(wr, wr.angularVelocity * 0.86); Body.setAngularVelocity(wf, wf.angularVelocity * 0.88);
+        if (touching) this.kick(0.985);
+      }
+      // ---- наклон: на земле поднимает/опускает нос, в воздухе крутит ----
+      if (air) {
+        if (Math.abs(inp.lean) > 0.05 && this.airTicks > 6) {
+          this.setPitch(b.angularVelocity + (inp.lean * AIR_SPIN - b.angularVelocity) * 0.35);
+        } else {
+          const target = sl + Math.PI * 2 * Math.round((b.angle - sl) / (Math.PI * 2));
+          const want = Phaser.Math.Clamp((target - b.angle) * 0.12, -0.3, 0.3);
+          this.setPitch(b.angularVelocity + (want - b.angularVelocity) * 0.25);
+        }
+        this.airRot += b.angle - this.lastAngle;
+      } else if (Math.abs(inp.lean) > 0.05) {
+        this.setPitch(Phaser.Math.Clamp(b.angularVelocity + inp.lean * 0.01, -0.07, 0.07));
+      }
+      // ---- вилли: едем на заднем колесе ----
+      if (tR && !tF && b.angle - sl < -0.3) {
+        this.wheelieT += STEP / 1000;
+        if (this.wheelieT > 1) { this.wheelieT -= 1; this.score += 30; this.popup('ВИЛЛИ!', '#7dd7ff', '+30'); }
+      } else this.wheelieT = Math.max(0, this.wheelieT - STEP / 1000);
+    } else if (this.state === 'finish') {
+      if (touching) this.kick(0.985);
+      Body.setAngularVelocity(wr, wr.angularVelocity * 0.97);
+    }
+    this.lastAngle = b.angle;
+    const sp = Math.hypot(b.velocity.x, b.velocity.y);
+    if (sp > 12 && this.state === 'run') this.kick(12 / sp);
+    this.wantSlow = this.state === 'run' && air && this.airTicks > 28 && Math.abs(this.airRot) > 1.2 && Math.abs(this.airRot) < 5.6;
+
+    // приземление
+    if (this.wasAir && !air && touching && this.state === 'run') {
+      const rel = Math.abs(Phaser.Math.Angle.Wrap(b.angle - sl));
+      const turns = Math.floor(Math.abs(this.airRot) / (Math.PI * 2) + 0.25);
+      if (rel > 1.9) { this.crash('Упс!'); return; }
+      this.landFx(Math.min(1, this.lastAir / 40));
+      if (turns >= 1) this.trick(turns, this.airRot > 0);
+    }
+    if (air && !this.wasAir) this.airRot = 0;
+    if (!air && touching) this.airRot = 0;
+    if (air) this.lastAir = this.airTicks;
+    this.wasAir = air;
+
+    if (this.state === 'run') {
+      const head = this.local(14, -82), hips = this.local(-10, -44);
+      if (head.y + 6 > groundY(head.x) || hips.y + 4 > groundY(hips.x)) { this.crash('Упс! Ещё раз!'); return; }
+      const nxt = LEVEL.checkpoints[this.cpIndex + 1];
+      if (nxt !== undefined && a.x > nxt) { this.cpIndex++; this.checkpoint = nxt; this.popup('Чекпоинт!', '#ffffff'); Sfx.check(); }
+      if (a.x > LEVEL.finishX) this.finish();
+    }
+    if (a.y > 1500 || a.x < -300) this.crash('Упс!');
+    if (tR && !air && sp0 > 3.2 && (++this.tickN) % 3 === 0) this.dust(wr.position.x, wr.position.y + WHEEL_R - 2, -sp0 * 0.25, 1);
+  }
+
+  trick(turns, forward) {
+    this.combo = this.comboT > 0 ? this.combo + 1 : 1; this.comboT = 6;
+    const pts = 100 * turns * this.combo; this.score += pts; this.flips += turns;
+    this.boost = Math.min(3.5, this.boost + 1.2 * turns);
+    const name = turns > 1 ? 'СУПЕР-САЛЬТО x' + turns + '!' : (forward ? 'ФРОНТФЛИП!' : 'САЛЬТО!');
+    this.popup(name, '#ffe14d', '+' + pts + (this.combo > 1 ? '   комбо x' + this.combo : ''));
+    Sfx.flip(); this.shake = 0.012;
+    const a = this.anchor(); this.burst(a.x, a.y - 40, 46, [0xffe14d, 0xff6b2c, 0x2bb673, 0x4db8ff, 0xff4d8d, 0xffffff]);
+  }
+  landFx(power) {
+    const a = this.anchor(); Sfx.land();
+    this.dust(a.x, a.y + 20, 0, 8 + Math.floor(power * 14));
+    this.shake = Math.max(this.shake, 0.004 + power * 0.006);
+  }
+  crash(text) {
+    if (this.state !== 'run') return;
+    this.state = 'crash'; this.crashTimer = 1000; this.wantSlow = false;
+    this.popup(text, '#ff6b6b'); Sfx.crash(); this.shake = 0.02;
+    const a = this.anchor(); this.burst(a.x, a.y - 30, 24, [0xffffff, 0xffd23f]);
+    this.combo = 0; this.boost = 0;
+  }
+  respawn() {
+    this.placeBike(this.checkpoint === 0 ? LEVEL.startX : this.checkpoint + 60, this.checkpoint === 0 ? 0 : 4);
+    this.state = 'run';
+  }
+  finish() {
+    this.state = 'finish'; this.wantSlow = false;
+    const t = this.time_;
+    const medal = t <= MEDAL_TIMES[0] ? 0 : t <= MEDAL_TIMES[1] ? 1 : t <= MEDAL_TIMES[2] ? 2 : -1;
+    const newRecord = !this.best.time || t < this.best.time;
+    if (newRecord) this.best.time = t;
+    if (this.score > (this.best.score || 0)) this.best.score = this.score;
+    saveBest(this.best);
+    this.result = { t, medal, newRecord };
+    Sfx.fanfare();
+    const a = this.anchor(); this.burst(a.x, a.y - 80, 90, [0xffe14d, 0xff6b2c, 0x2bb673, 0x4db8ff, 0xff4d8d, 0xffffff]);
+    this.time.delayedCall(1500, () => this.showPodium());
+  }
+
+  // ---------- частицы ----------
+  dust(x, y, vx, n) {
+    for (let i = 0; i < n; i++) this.parts.push({ x, y, vx: vx + (Math.random() - 0.5) * 2.5, vy: -Math.random() * 1.6, life: 1, dec: 0.03 + Math.random() * 0.02, r: 3 + Math.random() * 4, col: 0xd9b88f, grav: 0.02 });
+  }
+  burst(x, y, n, cols) {
+    for (let i = 0; i < n; i++) { const an = Math.random() * Math.PI * 2, v = 2 + Math.random() * 6; this.parts.push({ x, y, vx: Math.cos(an) * v, vy: Math.sin(an) * v - 3, life: 1, dec: 0.012 + Math.random() * 0.01, r: 3 + Math.random() * 3, col: cols[(Math.random() * cols.length) | 0], grav: 0.22 }); }
+  }
+
+  showPodium() {
+    this.state = 'done';
+    const { t, medal, newRecord } = this.result;
+    const cx = W / 2, cy = H / 2;
+    const root = this.add.container(0, 0).setScrollFactor(0).setDepth(100);
+    const dim = this.add.rectangle(cx, cy, W, H, 0x000000, 0.55);
+    const panel = this.add.rectangle(cx, cy, 700, 440, 0x1f3b3a, 1).setStrokeStyle(4, 0xffd23f);
+    const st = (size, color) => ({ fontFamily: 'Arial', fontStyle: 'bold', fontSize: size + 'px', color: color || '#fff' });
+    const title = this.add.text(cx, cy - 192, 'Финиш, Мирон!', st(38, '#ffe14d')).setOrigin(0.5);
+    const timeT = this.add.text(cx, cy - 148, fmt(t) + (newRecord ? '   новый рекорд!' : '   рекорд ' + fmt(this.best.time)), st(24)).setOrigin(0.5);
+    const scoreT = this.add.text(cx, cy - 118, 'Сальто: ' + this.flips + '   Очки: ' + this.score, st(20, '#bfe9e5')).setOrigin(0.5);
+    const g = this.add.graphics();
+    const base = cy + 125, bw = 120;
+    const blocks = [{ x: cx - bw, h: 80, n: '2', c: 0xc0c7cf, m: 1 }, { x: cx, h: 115, n: '1', c: 0xf2c230, m: 0 }, { x: cx + bw, h: 55, n: '3', c: 0xc8854a, m: 2 }];
+    blocks.forEach(b => { g.fillStyle(b.c, 1); g.fillRect(b.x - bw / 2 + 3, base - b.h, bw - 6, b.h); });
+    root.add([dim, panel, title, timeT, scoreT, g]);
+    blocks.forEach(b => root.add(this.add.text(b.x, base - b.h / 2, b.n, st(40, '#3a2a10')).setOrigin(0.5)));
+    const boy = this.add.graphics();
+    if (medal >= 0) {
+      const b = blocks.find(k => k.m === medal);
+      drawBoyStanding(boy, b.x, base - b.h);
+      const col = [0xffd23f, 0xd9dee4, 0xcd7f32][medal];
+      boy.lineStyle(4, 0xd62828, 1); boy.beginPath(); boy.moveTo(b.x - 8, base - b.h - 52); boy.lineTo(b.x, base - b.h - 36); boy.lineTo(b.x + 8, base - b.h - 52); boy.strokePath();
+      boy.fillStyle(col, 1); boy.fillCircle(b.x, base - b.h - 34, 11); boy.lineStyle(2, 0x000000, 0.5); boy.strokeCircle(b.x, base - b.h - 34, 11);
+      root.add(this.add.text(cx, cy - 82, ['ЗОЛОТО!', 'СЕРЕБРО!', 'БРОНЗА!'][medal], st(34, ['#ffd23f', '#e6ebf0', '#e8a366'][medal])).setOrigin(0.5));
+    } else {
+      drawBoyStanding(boy, cx + 2 * bw + 20, base);
+      root.add(this.add.text(cx, cy - 82, 'Почти! Ещё разок?', st(30, '#ffe9a8')).setOrigin(0.5));
+    }
+    root.add(boy);
+    const btn = this.add.rectangle(cx, cy + 172, 280, 56, 0x2bb673).setStrokeStyle(3, 0xffffff).setInteractive({ useHandCursor: true });
+    const btnT = this.add.text(cx, cy + 172, 'Ещё раз', st(28)).setOrigin(0.5);
+    btn.on('pointerup', () => { window.__autostart = true; this.scene.restart(); });
+    root.add([btn, btnT]);
+    this.hudBest.setText('Рекорд: ' + fmt(this.best.time));
+    root.setAlpha(0); this.tweens.add({ targets: root, alpha: 1, duration: 300 });
+  }
+
+  // ---------- отрисовка ----------
+  render() {
+    const b = this.bike, a = this.anchor(), wr = this.wr, wf = this.wf, sp = Math.hypot(b.velocity.x, b.velocity.y);
+    const inp = this.readInput();
+    this.crouchVis += ((inp.brake ? 1 : 0) - this.crouchVis) * 0.2;
+    this.tiltVis += (inp.lean - this.tiltVis) * 0.3;
+    const crank = wr.angle * 0.55;
+    drawRiderDyn(this.riderG, crank, this.crouchVis * 0.6, this.airTicks > 3 ? -this.tiltVis : 0);
+    this.bikeC.setPosition(a.x, a.y).setRotation(b.angle);
+    this.wheelR.setPosition(wr.position.x, wr.position.y).setRotation(wr.angle);
+    this.wheelF.setPosition(wf.position.x, wf.position.y).setRotation(wf.angle);
+    const gy = groundY(a.x), hgt = Math.max(0, gy - a.y - WHEEL_R);
+    this.shadow.setPosition(a.x, gy + 3).setRotation(slopeAt(a.x)).setScale(Math.max(0.4, 1 - hgt / 400), 1).setAlpha(Math.max(0.05, 0.28 - hgt / 700));
+    this.camTarget.setPosition(a.x + b.velocity.x * 7, a.y);
+    if (this.shake > 0) {
+      const cam = this.cameras.main;
+      cam.setScroll(cam.scrollX + (Math.random() - 0.5) * this.shake * 900, cam.scrollY + (Math.random() - 0.5) * this.shake * 900);
+      this.shake *= 0.85; if (this.shake < 0.0008) this.shake = 0;
+    }
+    if (sp > 5 && this.state === 'run') this.trailPts.push({ x: a.x, y: a.y - 20, l: 1 });
+    this.trail.clear();
+    this.trailPts = this.trailPts.filter(p => (p.l -= 0.05) > 0);
+    this.trailPts.forEach(p => { this.trail.fillStyle(0xffffff, p.l * 0.25); this.trail.fillCircle(p.x, p.y, 4 + p.l * 6); });
+    this.partG = this.partG || this.add.graphics().setDepth(8);
+    this.partG.clear();
+    this.parts = this.parts.filter(p => (p.life -= p.dec) > 0);
+    this.parts.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += p.grav; p.vx *= 0.985; this.partG.fillStyle(p.col, Math.min(1, p.life * 1.4)); this.partG.fillCircle(p.x, p.y, p.r * (0.4 + p.life * 0.6)); });
+    this.fx.clear();
+    const intensity = Phaser.Math.Clamp((sp - 6) / 4, 0, 1);
+    if (intensity > 0.05) {
+      for (let i = 0; i < 14; i++) {
+        const y = Math.random() * H, x = Math.random() * W, len = 60 + Math.random() * 120 * intensity;
+        this.fx.lineStyle(2, 0xffffff, 0.18 * intensity); this.fx.beginPath(); this.fx.moveTo(x, y); this.fx.lineTo(x - len, y); this.fx.strokePath();
+      }
+    }
+    this.drawUi(sp, inp);
+  }
+
+  drawUi(sp, inp) {
+    const g = this.pedalG; g.clear();
+    const btn = (cx, cy, r, pressed, col, icon) => {
+      const k = pressed ? 0.93 : 1;
+      g.fillStyle(0x000000, 0.3); g.fillCircle(cx, cy + 5, r * k);
+      g.fillStyle(col, pressed ? 0.95 : 0.78); g.fillCircle(cx, cy, r * k);
+      g.lineStyle(4, 0xffffff, pressed ? 0.95 : 0.55); g.strokeCircle(cx, cy, r * k);
+      icon(cx, cy, r * k);
+    };
+    const bars = (cx, cy, r) => { g.fillStyle(0xffffff, 0.95); g.fillRoundedRect(cx - r * 0.38, cy - r * 0.3, r * 0.76, r * 0.18, 3); g.fillRoundedRect(cx - r * 0.38, cy, r * 0.76, r * 0.18, 3); };
+    const rot = (cx, cy, r, ccw) => {   // круговая стрелка: назад (против часовой) / вперёд (по часовой)
+      const rad = r * 0.46, m = ccw ? -1 : 1, a0 = Math.PI * 0.15, a1 = Math.PI * 1.35;
+      g.lineStyle(7, 0xffffff, 0.95); g.beginPath();
+      for (let k = 0; k <= 16; k++) { const an = a0 + (a1 - a0) * k / 16, px = cx + m * rad * Math.cos(an), py = cy + rad * Math.sin(an); if (k === 0) g.moveTo(px, py); else g.lineTo(px, py); }
+      g.strokePath();
+      const ex = cx + m * rad * Math.cos(a1), ey = cy + rad * Math.sin(a1), tx = -m * Math.sin(a1), ty = Math.cos(a1), nx = -ty, ny = tx;
+      g.fillStyle(0xffffff, 0.95); g.fillTriangle(ex + tx * 16, ey + ty * 16, ex + nx * 12, ey + ny * 12, ex - nx * 12, ey - ny * 12);
+    };
+    const gasOn = this.held('GAS') || this.ctl.gas, brOn = this.held('BR') || this.ctl.brake;
+    const lbOn = this.held('LB') || this.ctl.lb || inp.lean < -0.2, lfOn = this.held('LF') || this.ctl.lf || inp.lean > 0.2;
+    btn(W - 112, H - 98, 84, gasOn, 0x1fa05a, (cx, cy, r) => {
+      g.fillStyle(0x0e5a31, 1); g.fillRoundedRect(cx - r * 0.5, cy - r * 0.62, r, r * 1.24, 12);
+      g.fillStyle(0xffffff, 0.95); g.fillTriangle(cx, cy - r * 0.42, cx - r * 0.3, cy + r * 0.02, cx + r * 0.3, cy + r * 0.02);
+      g.fillRect(cx - r * 0.1, cy, r * 0.2, r * 0.36);
+    });
+    btn(W - 290, H - 80, 60, brOn, 0xc23b2b, bars);
+    btn(112, H - 98, 84, lbOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, true));
+    btn(290, H - 80, 60, lfOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, false));
+    if (!this.labels) {
+      const t = (x, y, s) => this.add.text(x, y, s, { fontFamily: 'Arial', fontStyle: 'bold', fontSize: '15px', color: '#fff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0).setDepth(52);
+      this.labels = [t(W - 112, H - 10, 'ГАЗ'), t(W - 290, H - 10, 'ТОРМОЗ'), t(112, H - 10, 'НАКЛОН НАЗАД'), t(290, H - 10, 'ВПЕРЁД')];
+    }
+    const wx = W / 2, wy = 62, gg = this.hudG; gg.clear();
+    gg.lineStyle(7, 0x000000, 0.35); gg.strokeCircle(wx, wy, 24);
+    gg.lineStyle(5, 0xffffff, 0.85); gg.strokeCircle(wx, wy, 24);
+    const ang = this.tiltVis * 0.9;
+    gg.lineStyle(5, 0xff6b2c, 1); gg.beginPath(); gg.moveTo(wx - Math.cos(ang) * 24, wy - Math.sin(ang) * 24); gg.lineTo(wx + Math.cos(ang) * 24, wy + Math.sin(ang) * 24); gg.strokePath();
+    gg.fillStyle(0xffffff, 1); gg.fillCircle(wx, wy, 5);
+    const sg = this.speedG; sg.clear();
+    const bx = 20, by = 90, bw = 170;
+    sg.fillStyle(0x000000, 0.45); sg.fillRoundedRect(bx, by, bw, 14, 7);
+    sg.fillStyle(this.boost > 0.5 ? 0x7dff9a : 0xffffff, 1); sg.fillRoundedRect(bx + 2, by + 2, Math.max(6, (bw - 4) * Phaser.Math.Clamp(sp / 11, 0, 1)), 10, 5);
+    this.hudTime.setText(fmt(this.time_));
+    this.hudScore.setText('Очки: ' + this.score); this.hudFlips.setText('Сальто: ' + this.flips);
+    this.hudCombo.setText(this.combo > 1 ? 'КОМБО x' + this.combo : '');
+  }
+}
+
+// ======================= ЗАПУСК И СТАРТОВЫЙ ЭКРАН =======================
+new Phaser.Game({
+  type: Phaser.AUTO, parent: 'game', width: W, height: H, backgroundColor: '#9edcf2',
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  physics: { default: 'matter', matter: { gravity: { y: 1 }, debug: false } },
+  input: { activePointers: 4 },
+  scene: [RaceScene]
+});
+(function startScreen() {
+  const $ = id => document.getElementById(id);
+  const start = $('start'), calib = $('calib'), bar = $('bar'), go = $('go'), skip = $('skip');
+  function launch() {
+    start.style.display = 'none'; Sfx.init();
+    const tryBegin = () => { if (window.G && window.G.state === 'wait') window.G.begin(); else setTimeout(tryBegin, 100); };
+    tryBegin();
+  }
+  skip.onclick = () => { Tilt.on = false; launch(); };
+  go.onclick = async () => {
+    Sfx.init();
+    const ok = await Tilt.enable();
+    if (!ok) { calib.textContent = 'Наклон не включился, играем кнопками'; setTimeout(launch, 900); return; }
+    go.style.display = 'none'; skip.textContent = 'пропустить'; bar.style.display = 'block';
+    calib.textContent = 'Держи телефон ровно, потом наклони ВПРАВО, как руль';
+    Tilt.prev = null; Tilt.raw = 0; Tilt.smooth = undefined; Tilt.base = 0;
+    const t0 = performance.now(); let base = null, done = false;
+    const iv = setInterval(() => {
+      if (Tilt.smooth === undefined) { if (performance.now() - t0 > 2500) { clearInterval(iv); Tilt.on = false; calib.textContent = 'Датчик не отвечает, играем кнопками'; setTimeout(launch, 900); } return; }
+      if (base === null) { if (performance.now() - t0 > 900) base = Tilt.smooth; return; }
+      const d = Tilt.smooth - base;
+      bar.firstElementChild.style.width = (50 + Math.max(-45, Math.min(45, d)) / 45 * 50) + '%';
+      if (Math.abs(d) > 22 && !done) {
+        done = true; clearInterval(iv);
+        Tilt.sign = d > 0 ? 1 : -1; Tilt.base = base; calib.textContent = 'Отлично! Наклон настроен';
+        setTimeout(launch, 700);
+      }
+    }, 50);
+    skip.onclick = () => { clearInterval(iv); Tilt.on = false; launch(); };
+  };
+})();
+</script>
+</body>
+</html>
