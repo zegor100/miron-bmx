@@ -34,6 +34,9 @@
   .btn:active { transform: translateY(3px); box-shadow: 0 3px 0 #a83f12; }
   .btn.ghost { background: transparent; box-shadow: none; font-size: 16px; color: #bfeee9; text-decoration: underline; padding: 6px; }
   #calib { font-size: clamp(20px, 5.5vh, 30px); font-weight: bold; color: #ffe14d; min-height: 1.3em; }
+  #sens { font-size: 14px; color: #cfeee9; display: flex; gap: 8px; align-items: center; text-shadow: 0 2px 4px rgba(0,0,0,.6); }
+  #sens button { font: bold 14px Arial; color: #fff; background: rgba(255,255,255,.14); border: 2px solid rgba(255,255,255,.35); border-radius: 18px; padding: 5px 14px; }
+  #sens button.on { background: #ff6b2c; border-color: #fff; }
   #bar { width: min(420px, 70vw); height: 14px; background: #0c2c2b; border-radius: 9px; overflow: hidden; display: none; }
   #bar i { display: block; height: 100%; width: 50%; background: #ffe14d; }
 </style>
@@ -48,6 +51,7 @@
   <div id="bar"><i></i></div>
   <button class="btn" id="go">ПОЕХАЛИ!</button>
   <button class="btn ghost" id="skip">без наклона, только кнопки</button>
+  <div id="sens">Чувствительность наклона: <button data-s="0.7">мягко</button><button data-s="1" class="on">норм</button><button data-s="1.4">резко</button></div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
 <script>
@@ -141,6 +145,7 @@ const Sfx = {
       s.connect(g); g.connect(c.destination); s.start();
     } catch (e) { /* без звука */ }
   },
+  click() { this.tone(760, 0.03, 'square', 0.035); },
   pedal(c) { this.tone(260 + c * 380, 0.05, 'triangle', 0.07); },
   land() { this.noise(0.12, 0.12); this.tone(110, 0.12, 'sine', 0.15, 60); },
   flip() { [520, 660, 780, 1040].forEach((f, i) => setTimeout(() => this.tone(f, 0.16, 'square', 0.06), i * 70)); },
@@ -153,7 +158,7 @@ const Sfx = {
 // ======================= НАКЛОН ТЕЛЕФОНА =======================
 // Крен вокруг оси экрана считаем по направлению силы тяжести; знак определяет калибровка («наклони вправо»).
 const Tilt = {
-  on: false, raw: 0, prev: null, smooth: undefined, sign: 1, base: 0,
+  on: false, raw: 0, prev: null, smooth: undefined, sign: 1, base: 0, sens: 1,
   handler(e) {
     const a = e.accelerationIncludingGravity;
     if (!a || a.x == null || a.y == null) return;
@@ -279,6 +284,7 @@ class RaceScene extends Phaser.Scene {
     this.load.image('ground', 'ground.png');
     this.load.image('wood', 'wood.jpg');
     this.load.image('conc', 'conc.jpg');
+    ['tires', 'log', 'sign', 'fence', 'bush', 'stump', 'rocks', 'flags'].forEach(n => this.load.image('prop_' + n, 'prop_' + n + '.png'));
   }
 
   create() {
@@ -293,6 +299,7 @@ class RaceScene extends Phaser.Scene {
     this.parts = [];
     this.buildBackground();
     this.buildTerrain();
+    this.buildProps();
     this.buildBike();
     this.buildHud();
 
@@ -316,11 +323,18 @@ class RaceScene extends Phaser.Scene {
   setupInput() {
     const brakeC = { x: W - 222, y: H - 62 }, fwdC = { x: 222, y: H - 62 };
     const hit = (x, y) => {
+      if (y < 118 && Math.abs(x - W / 2) < 70 && Tilt.on) return 'RC';       // тап по шкале наклона: выровнять ноль
       if (x >= W / 2) return Math.hypot(x - brakeC.x, y - brakeC.y) < 70 ? 'BR' : 'GAS';
       return Math.hypot(x - fwdC.x, y - fwdC.y) < 70 ? 'LF' : 'LB';
     };
-    this.input.on('pointerdown', p => { Sfx.init(); this.ctl.held[p.id] = hit(p.x, p.y); });
-    this.input.on('pointermove', p => { if (p.isDown && this.ctl.held[p.id] !== undefined) this.ctl.held[p.id] = hit(p.x, p.y); });
+    this.flash = { GAS: 0, BR: 0, LB: 0, LF: 0, RC: 0 };
+    const feel = n => { this.flash[n] = 1; Sfx.click(); try { if (navigator.vibrate) navigator.vibrate(n === 'GAS' ? 14 : 9); } catch (e) { /* нет вибрации */ } };
+    this.input.on('pointerdown', p => {
+      Sfx.init(); const n = hit(p.x, p.y);
+      if (n === 'RC') { this.neutral = Tilt.val(); feel('RC'); return; }
+      this.ctl.held[p.id] = n; feel(n);
+    });
+    this.input.on('pointermove', p => { if (p.isDown && this.ctl.held[p.id] !== undefined) { const n = hit(p.x, p.y); if (n !== 'RC' && n !== this.ctl.held[p.id]) { this.ctl.held[p.id] = n; feel(n); } } });
     this.input.on('pointerup', p => { delete this.ctl.held[p.id]; });
     this.input.on('pointerupoutside', p => { delete this.ctl.held[p.id]; });
     const kb = this.input.keyboard, set = (names, key, v) => names.forEach(n => kb.on((v ? 'keydown-' : 'keyup-') + n, () => { Sfx.init(); this.ctl[key] = v; }));
@@ -334,8 +348,8 @@ class RaceScene extends Phaser.Scene {
     if (c.lb || this.held('LB')) lean -= 1;
     if (c.lf || this.held('LF')) lean += 1;
     if (lean === 0 && Tilt.on) {
-      const eff = Tilt.val() - this.neutral, dz = 6;
-      if (Math.abs(eff) > dz) lean = Phaser.Math.Clamp((Math.abs(eff) - dz) / 20, 0, 1) * Math.sign(eff);
+      const eff = Tilt.val() - this.neutral, dz = 2.5, full = 16 / Tilt.sens;
+      if (Math.abs(eff) > dz) lean = Math.pow(Phaser.Math.Clamp((Math.abs(eff) - dz) / (full - dz), 0, 1), 1.15) * Math.sign(eff);
     }
     return { gas: !!(c.gas || this.held('GAS')), brake: !!(c.brake || this.held('BR')), lean };
   }
@@ -349,6 +363,11 @@ class RaceScene extends Phaser.Scene {
     // лёгкое затемнение к низу, чтобы земля и байк читались
     const sh = this.add.graphics().setScrollFactor(0).setDepth(-99);
     for (let i = 0; i < 12; i++) { sh.fillStyle(0x1a2a14, 0.012 * i); sh.fillRect(0, H * 0.55 + i * (H * 0.45 / 12), W, H * 0.45 / 12 + 1); }
+    // мягкая виньетка по краям экрана и тёплый свет сверху справа
+    const vg = this.add.graphics().setScrollFactor(0).setDepth(44);
+    for (let i = 0; i < 14; i++) { const k = i / 13; vg.lineStyle(30, 0x08140f, 0.016 + 0.022 * k); vg.strokeEllipse(W / 2, H / 2, W * (0.98 + k * 0.6), H * (1.0 + k * 0.7)); }
+    const sun = this.add.graphics().setScrollFactor(0).setDepth(43).setBlendMode(Phaser.BlendModes.ADD);
+    for (let r = 300; r > 40; r -= 26) { sun.fillStyle(0xffd9a0, 0.012); sun.fillCircle(W - 60, -30, r); }
   }
   updateBg() {
     const cam = this.cameras.main;
@@ -375,6 +394,23 @@ class RaceScene extends Phaser.Scene {
       g.fillStyle(c3, 1); g.fillCircle(cx + 3, cy + 6, r * 1.02); g.fillCircle(cx - h * 0.2 + 3, cy + h * 0.2 + 6, r * 0.75); g.fillCircle(cx + h * 0.2 + 3, cy + h * 0.2 + 6, r * 0.75);
       g.fillStyle(rnd() > 0.5 ? c1 : c2, 1); g.fillCircle(cx, cy, r); g.fillCircle(cx - h * 0.2, cy + h * 0.2, r * 0.75); g.fillCircle(cx + h * 0.2, cy + h * 0.2, r * 0.75);
       g.fillStyle(0xffffff, 0.12); g.fillCircle(cx - r * 0.3, cy - r * 0.35, r * 0.45);
+    }
+  }
+
+  // ---------- предметы вдоль трассы (нарисованные) ----------
+  buildProps() {
+    const H_ = { tires: 46, log: 36, sign: 80, fence: 46, bush: 70, stump: 40, rocks: 44, flags: 130 };
+    const kinds = ['bush', 'tires', 'log', 'fence', 'rocks', 'sign', 'stump', 'bush', 'flags', 'tires', 'fence', 'log'];
+    const bad = x => LEVEL.wood.concat(LEVEL.concrete).some(r => x > r[0] - 90 && x < r[1] + 90) || LEVEL.checkpoints.some(c => Math.abs(x - c) < 110) || Math.abs(x - LEVEL.startX) < 180 || (x > LEVEL.finishX - 120 && x < LEVEL.finishX + 280);
+    let sd = 7; const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+    let i = 0;
+    for (let x = 260; x < LEVEL.finishX + 600; x += 170 + rnd() * 210) {
+      if (bad(x)) continue;
+      const k = kinds[(i++ + ((rnd() * 4) | 0)) % kinds.length], t = this.textures.get('prop_' + k).getSourceImage();
+      const h = H_[k] * (0.85 + rnd() * 0.3), sc = h / t.height, y = groundY(x);
+      const im = this.add.image(x, y + 8, 'prop_' + k).setOrigin(0.5, 1).setScale(sc).setDepth(0.5);
+      if (k !== 'flags' && k !== 'sign') im.setRotation(slopeAt(x) * 0.7);
+      if (rnd() > 0.5) im.setFlipX(true);
     }
   }
 
@@ -441,10 +477,10 @@ class RaceScene extends Phaser.Scene {
     this.trail = this.add.graphics().setDepth(3);
     this.trailPts = [];
     // нарисованный байк: рама с гонщиком + два вращающихся колеса (ступицы совпадают с шарнирами физики)
-    const K = (2 * HALF_BASE) / 362.5, WS = (2 * WHEEL_R + 1.5) / 256;
+    const K = (2 * HALF_BASE) / 259, WS = (2 * WHEEL_R + 1.5) / 256;
     this.wheelR = this.add.image(0, 0, 'wheel').setScale(WS).setDepth(5);
     this.wheelF = this.add.image(0, 0, 'wheel').setScale(WS).setDepth(5);
-    this.riderI = this.add.image(-HALF_BASE, 0, 'rider').setOrigin(17 / 420, 461 / 509).setScale(K);
+    this.riderI = this.add.image(-HALF_BASE, 0, 'rider').setOrigin(9 / 307, 342 / 378).setScale(K);
     this.bikeC = this.add.container(0, 0, [this.riderI]).setDepth(5.5);
   }
   anchor() {
@@ -526,7 +562,7 @@ class RaceScene extends Phaser.Scene {
     if (this.state === 'done' || this.state === 'wait') return;
     const inp = this.readInput();
     if (this.state === 'ready') {
-      if (inp.gas) { this.state = 'run'; this.msg.setAlpha(0); } else return;
+      if (inp.gas) { this.state = 'run'; this.msg.setAlpha(0); this.neutral = Tilt.on ? Tilt.val() : 0; } else return;
     }
     const near = w => groundY(w.position.x) - w.position.y <= WHEEL_R / Math.cos(slopeAt(w.position.x)) + 4;
     const tR = near(wr), tF = near(wf), touching = tR || tF;
@@ -536,7 +572,6 @@ class RaceScene extends Phaser.Scene {
     const sp0 = Math.hypot(b.velocity.x, b.velocity.y);
 
     if (this.state === 'crash') { this.crashTimer -= STEP; if (this.crashTimer <= 0) this.respawn(); return; }
-    if (Tilt.on && !air) this.neutral += (Tilt.val() - this.neutral) * 0.02;
     this.boost *= 0.994; this.comboT = Math.max(0, this.comboT - STEP / 1000);
     if (this.comboT === 0) this.combo = 0;
 
@@ -544,7 +579,7 @@ class RaceScene extends Phaser.Scene {
       // ---- газ и тормоз ----
       const maxW = (BASE_CAP + this.boost) / WHEEL_R;
       if (inp.gas) {
-        if (wr.angularVelocity < maxW) Body.setAngularVelocity(wr, Math.min(maxW, wr.angularVelocity + 0.014));
+        if (wr.angularVelocity < maxW) Body.setAngularVelocity(wr, Math.min(maxW, wr.angularVelocity + 0.026));
         if (tR) this.setPitch(b.angularVelocity - 0.0012);
       }
       if (inp.brake) {
@@ -651,9 +686,9 @@ class RaceScene extends Phaser.Scene {
 
   // гонщик на байке, стоит на месте (для пьедестала): контейнер, начало координат внизу по центру
   riderSprite(x, y, sc) {
-    const WSZ = 198 / 256;
-    const w1 = this.add.image(-193, -99, 'wheel').setScale(WSZ), w2 = this.add.image(169.5, -99, 'wheel').setScale(WSZ);
-    const r = this.add.image(0, -560, 'rider').setOrigin(0.5, 0);
+    const WSZ = 141 / 256;
+    const w1 = this.add.image(-144.5, -70.5, 'wheel').setScale(WSZ), w2 = this.add.image(114.5, -70.5, 'wheel').setScale(WSZ);
+    const r = this.add.image(0, -412.5, 'rider').setOrigin(0.5, 0);
     return this.add.container(x, y, [w1, w2, r]).setScale(sc);
   }
 
@@ -676,7 +711,7 @@ class RaceScene extends Phaser.Scene {
     root.add([dim, panel, g]);
     blocks.forEach(b => root.add(this.add.text(b.x, base - b.h / 2 + 4, b.n, st(38, '#3a2a10')).setOrigin(0.5)));
     const rx = medal >= 0 ? blocks.find(k => k.m === medal).x : px + bw + 4, ry = medal >= 0 ? base - blocks.find(k => k.m === medal).h : base - 44;
-    root.add(this.riderSprite(rx, ry, 0.27));
+    root.add(this.riderSprite(rx, ry, 0.3));
     const tx = cx + 170;
     root.add(this.add.text(tx, cy - 168, 'ФИНИШ, МИРОН!', st(34, '#ffe14d')).setOrigin(0.5));
     if (medal >= 0) {
@@ -707,7 +742,7 @@ class RaceScene extends Phaser.Scene {
     const inp = this.readInput();
     this.crouchVis += ((inp.brake ? 1 : 0) - this.crouchVis) * 0.2;
     this.tiltVis += (inp.lean - this.tiltVis) * 0.3;
-    this.riderI.setScale(this.riderI.scaleX, (2 * HALF_BASE) / 362.5 * (1 - this.crouchVis * 0.05));
+    this.riderI.setScale(this.riderI.scaleX, (2 * HALF_BASE) / 259 * (1 - this.crouchVis * 0.05));
     this.bikeC.setPosition(a.x, a.y).setRotation(b.angle);
     this.updateBg();
     this.wheelR.setPosition(wr.position.x, wr.position.y).setRotation(wr.angle);
@@ -724,6 +759,8 @@ class RaceScene extends Phaser.Scene {
     this.trail.clear();
     this.trailPts = this.trailPts.filter(p => (p.l -= 0.05) > 0);
     this.trailPts.forEach(p => { this.trail.fillStyle(0xffffff, p.l * 0.25); this.trail.fillCircle(p.x, p.y, 4 + p.l * 6); });
+    this.dustN = (this.dustN || 0) + 1;
+    if (this.state === 'run' && sp > 3 && this.airTicks < 3 && this.dustN % 2 === 0) this.dust(wr.position.x - 4, wr.position.y + WHEEL_R - 3, -b.velocity.x * 0.22, 1);
     this.partG = this.partG || this.add.graphics().setDepth(8);
     this.partG.clear();
     this.parts = this.parts.filter(p => (p.life -= p.dec) > 0);
@@ -741,8 +778,11 @@ class RaceScene extends Phaser.Scene {
 
   drawUi(sp, inp) {
     const g = this.pedalG; g.clear();
-    const btn = (cx, cy, r, pressed, col, icon) => {
-      const k = pressed ? 0.93 : 1;
+    for (const key in this.flash) this.flash[key] *= 0.9;
+    const btn = (cx, cy, r, pressed, col, icon, name) => {
+      const k = pressed ? 0.9 : 1, fl = this.flash[name] || 0;
+      if (fl > 0.02) { g.lineStyle(6, 0xffffff, fl * 0.9); g.strokeCircle(cx, cy, r * (1.05 + (1 - fl) * 0.5)); }
+      if (pressed) { g.fillStyle(0xffffff, 0.16); g.fillCircle(cx, cy, r * 1.12); }
       g.fillStyle(0x000000, 0.18); g.fillCircle(cx, cy + 4, r * k);
       g.fillStyle(col, pressed ? 0.9 : 0.5); g.fillCircle(cx, cy, r * k);
       g.lineStyle(3, 0xffffff, pressed ? 0.95 : 0.5); g.strokeCircle(cx, cy, r * k);
@@ -763,20 +803,26 @@ class RaceScene extends Phaser.Scene {
       g.fillStyle(0x0e5a31, 1); g.fillRoundedRect(cx - r * 0.5, cy - r * 0.62, r, r * 1.24, 12);
       g.fillStyle(0xffffff, 0.95); g.fillTriangle(cx, cy - r * 0.42, cx - r * 0.3, cy + r * 0.02, cx + r * 0.3, cy + r * 0.02);
       g.fillRect(cx - r * 0.1, cy, r * 0.2, r * 0.36);
-    });
-    btn(W - 222, H - 62, 46, brOn, 0xc23b2b, bars);
-    btn(92, H - 86, 66, lbOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, true));
-    btn(222, H - 62, 46, lfOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, false));
+    }, 'GAS');
+    btn(W - 222, H - 62, 46, brOn, 0xc23b2b, bars, 'BR');
+    btn(92, H - 86, 66, lbOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, true), 'LB');
+    btn(222, H - 62, 46, lfOn, 0x2a6fd0, (cx, cy, r) => rot(cx, cy, r, false), 'LF');
     if (!this.labels) {
       const t = (x, y, s) => this.add.text(x, y, s, { fontFamily: 'Arial', fontStyle: 'bold', fontSize: '15px', color: '#fff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0).setDepth(52);
       this.labels = [t(W - 92, H - 8, 'ГАЗ'), t(W - 222, H - 8, 'ТОРМОЗ'), t(92, H - 8, 'НАЗАД'), t(222, H - 8, 'ВПЕРЁД')];
     }
-    const wx = W / 2, wy = 62, gg = this.hudG; gg.clear();
-    gg.lineStyle(7, 0x000000, 0.35); gg.strokeCircle(wx, wy, 24);
-    gg.lineStyle(5, 0xffffff, 0.85); gg.strokeCircle(wx, wy, 24);
-    const ang = this.tiltVis * 0.9;
-    gg.lineStyle(5, 0xff6b2c, 1); gg.beginPath(); gg.moveTo(wx - Math.cos(ang) * 24, wy - Math.sin(ang) * 24); gg.lineTo(wx + Math.cos(ang) * 24, wy + Math.sin(ang) * 24); gg.strokePath();
-    gg.fillStyle(0xffffff, 1); gg.fillCircle(wx, wy, 5);
+    const wx = W / 2, wy = 66, gg = this.hudG; gg.clear();
+    if (Tilt.on) {
+      const fl = this.flash.RC || 0, lean = this.tiltVis, hot = Math.abs(lean) > 0.85;
+      gg.fillStyle(0x000000, 0.4); gg.fillCircle(wx, wy, 40);
+      if (fl > 0.02) { gg.lineStyle(6, 0xffffff, fl); gg.strokeCircle(wx, wy, 40 + (1 - fl) * 18); }
+      gg.lineStyle(4, 0xffffff, 0.5); gg.strokeCircle(wx, wy, 38);
+      gg.lineStyle(4, 0x7dff9a, 0.9); gg.beginPath(); gg.arc(wx, wy, 38, -Math.PI / 2 - 0.16, -Math.PI / 2 + 0.16, false); gg.strokePath();   // «ноль»
+      const ang = lean * 0.95, nx = Math.cos(ang), ny = Math.sin(ang);
+      gg.lineStyle(7, hot ? 0xff4d4d : 0xff9a3c, 1); gg.beginPath(); gg.moveTo(wx - nx * 30, wy - ny * 30); gg.lineTo(wx + nx * 30, wy + ny * 30); gg.strokePath();
+      gg.fillStyle(0xffffff, 1); gg.fillCircle(wx, wy, 6);
+      if (!this.tiltLbl) this.tiltLbl = this.add.text(wx, wy + 48, 'НАКЛОН  (тап: выровнять)', { fontFamily: 'Arial', fontStyle: 'bold', fontSize: '12px', color: '#fff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0).setDepth(52);
+    } else if (this.tiltLbl) this.tiltLbl.setVisible(false);
     const sg = this.speedG; sg.clear();
     const bx = 20, by = 90, bw = 170;
     sg.fillStyle(0x000000, 0.45); sg.fillRoundedRect(bx, by, bw, 14, 7);
@@ -803,6 +849,11 @@ new Phaser.Game({
     const tryBegin = () => { if (window.G && window.G.state === 'wait') window.G.begin(); else setTimeout(tryBegin, 100); };
     tryBegin();
   }
+  try { const v = parseFloat(localStorage.getItem('miron_sens')); if (v) Tilt.sens = v; } catch (e) { /* без памяти */ }
+  document.querySelectorAll('#sens button').forEach(b => {
+    if (parseFloat(b.dataset.s) === Tilt.sens) b.classList.add('on'); else b.classList.remove('on');
+    b.onclick = () => { Tilt.sens = parseFloat(b.dataset.s); try { localStorage.setItem('miron_sens', String(Tilt.sens)); } catch (e) { /* без памяти */ } document.querySelectorAll('#sens button').forEach(x => x.classList.toggle('on', x === b)); };
+  });
   skip.onclick = () => { Tilt.on = false; launch(); };
   go.onclick = async () => {
     Sfx.init();
@@ -815,9 +866,10 @@ new Phaser.Game({
     const iv = setInterval(() => {
       if (Tilt.smooth === undefined) { if (performance.now() - t0 > 2500) { clearInterval(iv); Tilt.on = false; calib.textContent = 'Датчик не отвечает, играем кнопками'; setTimeout(launch, 900); } return; }
       if (base === null) { if (performance.now() - t0 > 900) base = Tilt.smooth; return; }
+      if (performance.now() - t0 > 12000 && !done) { done = true; clearInterval(iv); Tilt.on = false; calib.textContent = 'Не вышло, играем кнопками'; setTimeout(launch, 900); return; }
       const d = Tilt.smooth - base;
-      bar.firstElementChild.style.width = (50 + Math.max(-45, Math.min(45, d)) / 45 * 50) + '%';
-      if (Math.abs(d) > 22 && !done) {
+      bar.firstElementChild.style.width = (50 + Math.max(-30, Math.min(30, d)) / 30 * 50) + '%';
+      if (Math.abs(d) > 14 && !done) {
         done = true; clearInterval(iv);
         Tilt.sign = d > 0 ? 1 : -1; Tilt.base = base; calib.textContent = 'Отлично! Наклон настроен';
         setTimeout(launch, 700);
