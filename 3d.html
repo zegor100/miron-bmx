@@ -419,7 +419,7 @@ const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= 2 * Math.PI;
 function popup(text, sub, color) { const p = $('pop'); p.innerHTML = text + (sub ? '<small>' + sub + '</small>' : ''); p.style.color = color || '#ffe14d'; p.style.opacity = 1; clearTimeout(S.popT); S.popT = setTimeout(() => p.style.opacity = 0, 1100); }
 function placeAt(sTotal, spd) { S.s = sTotal; S.u = 0; S.y = ground(0, sTotal) + 0.02; S.vy = 0; S.v = spd; S.pitch = Math.atan(slopeS(sTotal)); S.pitchW = 0; S.air = 0; S.airRot = 0; S.roll = 0; }
 function begin() { if (S.state !== 'wait') return; startCount(); }
-function startCount() { S.state = 'count'; S.cdT = 3.9; S.cdN = 4; S.neutral = Tilt.on ? Tilt.val() : 0; $('msg').style.fontSize = '84px'; rec.length = 0; recT = 0; }
+function startCount() { S.holdTip = false; S.state = 'count'; S.cdT = 3.9; S.cdN = 4; S.neutral = 0; S.cdTilt = true; $('msg').style.fontSize = '84px'; rec.length = 0; recT = 0; }
 function reset() { S.t = 0; S.score = 0; S.flips = 0; S.cp = 0; S.lap = 0; S.comboT = 0; $('flips').textContent = 'Сальто: 0'; $('score').textContent = 'Очки: 0'; $('end').style.display = 'none'; placeAt(2, 0); startCount(); }
 
 function readInput() {
@@ -438,8 +438,10 @@ function step(dt) {
   const inp = readInput(), air = S.air > 0.06;
   if (S.state === 'count') {
     S.cdT -= dt; const n = Math.ceil(S.cdT - 0.9), msg = $('msg');
+    if (Tilt.on && S.cdT > 0.9) S.neutral += (Tilt.val() - S.neutral) * Math.min(1, dt * 6);   // пока идёт отсчёт, ноль следует за положением телефона; на «СТАРТ» замирает
     if (n !== S.cdN) { S.cdN = n; if (n > 0) { msg.textContent = n; Sfx.tone(520, 0.12, 'square', 0.07); } else { msg.textContent = 'СТАРТ!'; Sfx.tone(880, 0.35, 'square', 0.08); Sfx.tone(1320, 0.4, 'triangle', 0.06); } }
     if (S.cdT <= 0.9 && S.state === 'count') { S.state = 'run'; setTimeout(() => { if (S.state === 'run') { msg.textContent = ''; msg.style.fontSize = '28px'; } }, 700); tip('Качай: на подъёме горки НАЗАД, на спуске ВПЕРЁД. На трамплине держи САЛЬТО'); }
+    if (S.state === 'count' && Tilt.on && S.cdT > 3.2 && !S.holdTip) { S.holdTip = true; tip('Держи телефон ровно: так будет «прямо»'); }
     else { applyVisual(dt, inp); return; }
   }
   if (S.state === 'crash') { S.crashT -= dt; if (S.crashT <= 0) { placeAt(Math.floor(S.s / L) * L + CPS[S.cp] + 0.5, 7); S.state = 'run'; } applyVisual(dt, inp); return; }
