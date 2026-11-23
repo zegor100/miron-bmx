@@ -97,13 +97,16 @@
   <div id="sens">Чувствительность: <button data-s="0.7">мягко</button><button data-s="1" class="on">норм</button><button data-s="1.4">резко</button></div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script>
 'use strict';
 // ======================= ЗВУК =======================
+const MUTE = /[?&]mute/.test(location.search);   // тесты без звука
+// вкладка скрыта или свёрнута: звук на паузу, вернулись: продолжаем
+document.addEventListener('visibilitychange', () => { const c = Sfx.ctx; if (!c) return; try { if (document.hidden) c.suspend(); else c.resume(); } catch (e) {} });
+addEventListener('pagehide', () => { try { Sfx.ctx && Sfx.ctx.close(); } catch (e) {} });
 const Sfx = {
   ctx: null,
-  init() { try { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); } catch (e) { this.ctx = null; } },
+  init() { if (MUTE) return; try { if (!this.ctx)this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); } catch (e) { this.ctx = null; } },
   tone(f, d, type, vol, slideTo) { const c = this.ctx; if (!c) return; try { const o = c.createOscillator(), g = c.createGain(), t = c.currentTime; o.type = type || 'sine'; o.frequency.setValueAtTime(f, t); if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + d); g.gain.setValueAtTime(vol || 0.1, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d); o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + d + 0.02); } catch (e) {} },
   noise(d, vol) { const c = this.ctx; if (!c) return; try { const len = Math.floor(c.sampleRate * d), buf = c.createBuffer(1, len, c.sampleRate), data = buf.getChannelData(0); for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len); const s = c.createBufferSource(), g = c.createGain(); s.buffer = buf; g.gain.value = vol || 0.15; s.connect(g); g.connect(c.destination); s.start(); } catch (e) {} },
   click() { this.tone(760, 0.03, 'square', 0.035); },
@@ -315,51 +318,176 @@ flags(4);
 const CPS = [0, 1, 2, 3].map(k => k * L / 4);
 CPS.slice(1).forEach(s => { for (const su of [-1, 1]) { const w = worldPos(s, su * 3.4), m = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0x333a40 })); m.position.set(w[0], ground(su * 3.4, s) + 1.1, w[1]); scene.add(m); const f = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.5), new THREE.MeshBasicMaterial({ color: 0xffd23f, side: THREE.DoubleSide })); f.position.set(w[0], ground(su * 3.4, s) + 1.95, w[1]); f.rotation.y = yawAt(s); scene.add(f); } });
 
-// гонщик
+// гонщик: собран из деталей (по фото Мирона), ноги крутят педали, руки держат руль
 const rider = new THREE.Group(); rider.rotation.order = 'YXZ'; scene.add(rider);
 const shadowBlob = new THREE.Mesh(new THREE.CircleGeometry(0.62, 20), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28, depthWrite: false }));
 shadowBlob.rotation.x = -Math.PI / 2; scene.add(shadowBlob);
-let modelReady = false, riderHolder = null;
-// джерси как у Мирона: красный torso → оранжевый (шлем остаётся красным), бирюзовые рукава остаются
-function recolorJersey(tex) {
-  try {
-    const img = tex.image, cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
-    const ctx = cv.getContext('2d'); ctx.drawImage(img, 0, 0); const id = ctx.getImageData(0, 0, cv.width, cv.height), d = id.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), v = mx, dl = mx - mn;
-      if (v < 0.42 || dl < 0.28) continue;
-      const sat = dl / mx; if (sat < 0.5) continue;
-      let h = 0; if (mx === r) h = ((g - b) / dl) % 6; else if (mx === g) h = (b - r) / dl + 2; else h = (r - g) / dl + 4; h *= 60; if (h < 0) h += 360;
-      if (h >= 5 && h <= 26) {                        // оранжево-красное: торс джерси
-        const nh = 20 + (h - 5) * 0.4, ns = Math.min(1, sat * 1.04), nv = Math.min(1, v * 1.1);
-        const c = nv * ns, x = c * (1 - Math.abs(((nh / 60) % 2) - 1)), m2 = nv - c; let rr = 0, gg = 0, bb = 0;
-        if (nh < 60) { rr = c; gg = x; } else { rr = x; gg = c; }
-        d[i] = (rr + m2) * 255; d[i + 1] = (gg + m2) * 255; d[i + 2] = (bb + m2) * 255;
-      }
+let modelReady = true;
+function canvasTex(w, h, draw) { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h, c); const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = 4; t.userData = { c }; return t; }
+const RIG = (() => {
+  const g = new THREE.Group(); rider.add(g);      // вперёд = -Z, вправо = +X, вверх = +Y
+  const M = (color, o) => new THREE.MeshStandardMaterial(Object.assign({ color: new THREE.Color(color).convertSRGBToLinear(), roughness: 0.75, metalness: 0 }, o || {}));
+  const mat = {
+    frame: M(0x9aa0a6, { roughness: 0.32, metalness: 0.65 }), dark: M(0x1e2023, { roughness: 0.55, metalness: 0.3 }),
+    tire: M(0x151515, { roughness: 0.92 }), rim: M(0xc9ced4, { roughness: 0.25, metalness: 0.85 }), pedal: M(0xe0262b, { roughness: 0.5 }),
+    pants: M(0x1c1d22, { roughness: 0.9 }), guard: M(0x0b0b0d, { roughness: 0.35 }), shoe: M(0x2d55cc, { roughness: 0.6 }), sole: M(0xf4f4f4, { roughness: 0.8 }),
+    glove: M(0xff7a1a, { roughness: 0.65 }), skin: M(0xf0c4a2, { roughness: 0.75 }), sleeveO: M(0xff5a1f, { roughness: 0.85 }), sleeveT: M(0x25c4bf, { roughness: 0.85 }),
+    hRed: M(0xe0242a, { roughness: 0.3 }), eye: M(0x2a1d14, { roughness: 0.4 }), hair: M(0xb98a55, { roughness: 0.9 })
+  };
+  const add = (geo, m, parent) => { const o = new THREE.Mesh(geo, m); o.castShadow = true; (parent || g).add(o); return o; };
+  const UP = new THREE.Vector3(0, 1, 0), t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), t3 = new THREE.Vector3();
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  function seg(r0, r1, m, parent, rs) { const geo = new THREE.CylinderGeometry(r1, r0, 1, rs || 12, 1); geo.translate(0, 0.5, 0); return add(geo, m, parent); }
+  function put(mesh, a, b) { t1.subVectors(b, a); const len = t1.length() || 1e-4; mesh.position.copy(a); mesh.quaternion.setFromUnitVectors(UP, t1.divideScalar(len)); mesh.scale.set(1, len, 1); }
+  function tube(a, b, r, m, parent) { const o = seg(r, r, m, parent, 10); put(o, a, b); return o; }
+  function ik(A, T, la, lb, pole, out) {
+    const d = t2.subVectors(T, A); let dist = d.length(); dist = Math.min(dist, (la + lb) * 0.999); d.normalize();
+    const along = (la * la - lb * lb + dist * dist) / (2 * dist), h = Math.sqrt(Math.max(0, la * la - along * along));
+    const p = t3.copy(pole).addScaledVector(d, -pole.dot(d)).normalize();
+    return out.copy(A).addScaledVector(d, along).addScaledVector(p, h);
+  }
+  // ---------- байк ----------
+  const WR = 0.315, RA = V(0, WR, 0.5), FA = V(0, WR, -0.5), BB = V(0, 0.34, 0.1);
+  const spokeT = canvasTex(256, 256, (x, w) => { x.translate(128, 128); x.strokeStyle = '#d9dde2'; x.lineWidth = 2.2; for (let i = 0; i < 18; i++) { const a = i / 18 * Math.PI * 2; x.beginPath(); x.moveTo(Math.cos(a) * 12, Math.sin(a) * 12); x.lineTo(Math.cos(a + 0.5) * 124, Math.sin(a + 0.5) * 124); x.stroke(); } x.fillStyle = '#c9ced4'; x.beginPath(); x.arc(0, 0, 16, 0, 7); x.fill(); });
+  const spokeM = new THREE.MeshStandardMaterial({ map: spokeT, transparent: true, alphaTest: 0.3, side: THREE.DoubleSide, metalness: 0.6, roughness: 0.35 });
+  function wheel(pos) {
+    const w = new THREE.Group(); w.position.copy(pos); g.add(w);
+    const tire = add(new THREE.TorusGeometry(WR - 0.032, 0.032, 10, 36), mat.tire, w); tire.rotation.y = Math.PI / 2;
+    const rim = add(new THREE.TorusGeometry(WR - 0.062, 0.011, 6, 36), mat.rim, w); rim.rotation.y = Math.PI / 2;
+    const sp = add(new THREE.CircleGeometry(WR - 0.06, 24), spokeM, w); sp.rotation.y = Math.PI / 2; sp.castShadow = false;
+    const hub = add(new THREE.CylinderGeometry(0.022, 0.022, 0.09, 10), mat.rim, w); hub.rotation.z = Math.PI / 2;
+    return w;
+  }
+  const rearW = wheel(RA);
+  const front = new THREE.Group(); const HT0 = V(0, 0.62, -0.4), HT1 = V(0, 0.8, -0.36); front.position.copy(HT0); g.add(front);   // руль, вилка, табличка, переднее колесо
+  const frontW = wheel(FA.clone().sub(HT0)); g.remove(frontW); front.add(frontW);
+  const ST = V(0, 0.7, 0.24);   // подседельный узел
+  const downT = canvasTex(128, 512, (x, w, h) => { x.fillStyle = '#9aa0a6'; x.fillRect(0, 0, w, h); x.fillStyle = '#ff6a1a'; x.font = 'bold 64px Arial'; for (const cx of [32, 96]) { x.save(); x.translate(cx, h / 2); x.rotate(Math.PI / 2); x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('MEYBO', 0, 0); x.restore(); } });
+  const downM = new THREE.MeshStandardMaterial({ map: downT, roughness: 0.35, metalness: 0.5 });
+  tube(HT0.clone().add(V(0, 0.02, 0)), BB, 0.03, downM);          // нижняя труба с надписью MEYBO
+  tube(HT1.clone().add(V(0, -0.03, 0)), ST, 0.022, mat.frame);     // верхняя
+  tube(BB, ST.clone().add(V(0, 0.06, 0.01)), 0.024, mat.frame);    // подседельная
+  tube(HT0, HT1, 0.032, mat.frame);                                 // рулевой стакан
+  for (const sx of [-0.055, 0.055]) { tube(BB, RA.clone().setX(sx), 0.016, mat.frame); tube(ST, RA.clone().setX(sx), 0.014, mat.frame); }
+  const seat = add(new THREE.BoxGeometry(0.09, 0.04, 0.22), mat.dark); seat.position.set(0, 0.78, 0.29); seat.rotation.x = 0.12;
+  // передняя часть (координаты от рулевого стакана)
+  const F = (x, y, z) => V(x, y, z).sub(HT0);
+  for (const sx of [-0.05, 0.05]) tube(F(0, 0.62, -0.4).setX(sx * 0.6), F(sx, WR, -0.5), 0.017, mat.frame, front);
+  tube(F(0, 0.8, -0.36), F(0, 0.88, -0.35), 0.022, mat.dark, front);    // вынос
+  for (const sx of [-1, 1]) { tube(F(0.06 * sx, 0.87, -0.35), F(0.17 * sx, 1.02, -0.32), 0.012, mat.dark, front); tube(F(0.17 * sx, 1.02, -0.32), F(0.34 * sx, 1.03, -0.31), 0.02, mat.dark, front); }
+  tube(F(-0.07, 0.87, -0.35), F(0.07, 0.87, -0.35), 0.012, mat.dark, front); tube(F(-0.13, 0.96, -0.33), F(0.13, 0.96, -0.33), 0.01, mat.dark, front);
+  const plateT = canvasTex(256, 220, (x, w, h) => { x.fillStyle = '#2a4fd0'; x.beginPath(); x.moveTo(10, 30); x.quadraticCurveTo(w / 2, -6, w - 10, 30); x.lineTo(w - 22, h - 10); x.lineTo(22, h - 10); x.closePath(); x.fill(); x.strokeStyle = '#fff'; x.lineWidth = 6; x.stroke(); x.fillStyle = '#fff'; x.font = 'bold 132px Arial'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('97', w / 2, h / 2 + 12); });
+  const plateM = new THREE.MeshStandardMaterial({ map: plateT, transparent: true, alphaTest: 0.4, roughness: 0.5 });
+  for (const back of [0, 1]) { const p = add(new THREE.PlaneGeometry(0.24, 0.2), plateM, front); p.position.copy(F(0, 0.93, back ? -0.405 : -0.41)); p.rotation.set(-0.15, back ? 0 : Math.PI, 0); }
+  const gripL = F(-0.27, 1.03, -0.31), gripR = F(0.27, 1.03, -0.31);
+  // шатуны и педали
+  const ring = add(new THREE.CylinderGeometry(0.085, 0.085, 0.012, 24), mat.dark); ring.rotation.z = Math.PI / 2; ring.position.copy(BB).setX(0.05);
+  const crankR = seg(0.016, 0.016, mat.dark), crankL = seg(0.016, 0.016, mat.dark);
+  const pedR = add(new THREE.BoxGeometry(0.1, 0.022, 0.085), mat.pedal), pedL = add(new THREE.BoxGeometry(0.1, 0.022, 0.085), mat.pedal);
+  // ---------- Мирон ----------
+  // джерси: справа оранжевая, слева бирюзовая, брызги, PETERHOF спереди, лев на спине
+  const jerseyT = canvasTex(1024, 512, (x, w, h) => {
+    x.fillStyle = '#ff5a1f'; x.fillRect(0, 0, w, h);
+    x.fillStyle = '#25c4bf'; x.beginPath(); x.moveTo(0, h * 0.55); x.lineTo(60, h * 0.2); x.lineTo(470, 0); x.lineTo(430, h); x.lineTo(0, h); x.closePath(); x.fill();   // левый бок и низ спереди
+    let s = 7; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 260; i++) { x.fillStyle = r() > 0.5 ? 'rgba(255,255,255,0.85)' : 'rgba(225,40,40,0.85)'; x.beginPath(); x.ellipse(r() * w, r() * h, 2 + r() * 10, 1 + r() * 4, r() * 3, 0, 7); x.fill(); }
+    x.fillStyle = '#fff'; x.strokeStyle = '#1b1b1b'; x.lineWidth = 7; x.font = 'bold 70px Arial Black, Arial'; x.textAlign = 'center';
+    for (const cx of [0, w]) { x.strokeText('PETERHOF', cx, 150); x.fillText('PETERHOF', cx, 150); x.font = 'bold 48px Arial Black, Arial'; x.strokeText('BMX', cx + 30, 205); x.fillText('BMX', cx + 30, 205); x.font = 'bold 70px Arial Black, Arial'; }
+    x.fillStyle = '#fff'; x.fillRect(w * 0.73, 40, 46, 30); x.fillStyle = '#1c4fd6'; x.fillRect(w * 0.73, 50, 46, 10); x.fillStyle = '#d8262b'; x.fillRect(w * 0.73, 60, 46, 10);   // флаг на правом плече
+  });
+  const decal = new Image(); decal.onload = () => {   // лев и PETERHOF BMX на спину, мягкие края
+    const c = jerseyT.userData.c, x = c.getContext('2d'), dw = 300, dh = 290, cx = 512, cy = 205;
+    const tmp = document.createElement('canvas'); tmp.width = dw; tmp.height = dh; const y = tmp.getContext('2d'); y.drawImage(decal, 0, 0, dw, dh);
+    y.globalCompositeOperation = 'destination-in'; const gr = y.createRadialGradient(dw / 2, dh / 2, dw * 0.3, dw / 2, dh / 2, dw * 0.52); gr.addColorStop(0, '#000'); gr.addColorStop(1, 'rgba(0,0,0,0)'); y.fillStyle = gr; y.fillRect(0, 0, dw, dh);
+    x.drawImage(tmp, cx - dw / 2, cy - dh / 2); jerseyT.needsUpdate = true;
+  }; decal.src = 'decal_back.png';
+  const jerseyM = new THREE.MeshStandardMaterial({ map: jerseyT, roughness: 0.85 });
+  const torso = new THREE.Group(); g.add(torso);
+  const tp = [[0.122, 0], [0.138, 0.06], [0.146, 0.16], [0.152, 0.27], [0.155, 0.34], [0.14, 0.39], [0.1, 0.425], [0.05, 0.44]].map(p => new THREE.Vector2(p[0], p[1]));
+  const body = add(new THREE.LatheGeometry(tp, 28, Math.PI), jerseyM, torso); body.scale.set(1, 1.1, 0.66);
+  const hips = add(new THREE.SphereGeometry(0.13, 16, 12), mat.pants, torso); hips.scale.set(1.02, 0.7, 0.75); hips.position.y = 0.01;
+  const neck = add(new THREE.CylinderGeometry(0.045, 0.05, 0.08, 10), mat.skin, torso); neck.position.y = 0.5;
+  // голова в шлеме-интеграле: красный с белым, синие вставки сзади
+  const head = new THREE.Group(); g.add(head);
+  const helmT = canvasTex(512, 256, (x, w, h) => {
+    x.fillStyle = '#e0242a'; x.fillRect(0, 0, w, h);
+    x.fillStyle = '#fff'; for (const k of [-1, 1]) for (let i = 0; i < 3; i++) { const cx = w / 2 + k * (70 + i * 46); x.beginPath(); x.moveTo(cx, 20); x.lineTo(cx + k * 26, 20); x.lineTo(cx + k * 70, h * 0.62); x.lineTo(cx + k * 44, h * 0.62); x.closePath(); x.fill(); }
+    x.fillStyle = '#1f57d6'; x.beginPath(); x.ellipse(w / 2, h * 0.86, 120, 46, 0, 0, 7); x.fill();
+    x.fillStyle = '#fff'; x.font = 'bold 44px Arial'; x.textAlign = 'center'; x.fillText('V3', w / 2, h * 0.5);
+  });
+  const helmM = new THREE.MeshStandardMaterial({ map: helmT, roughness: 0.28, metalness: 0.05, side: THREE.DoubleSide });
+  const HRAD = 0.16, gap = 0.62;
+  add(new THREE.SphereGeometry(HRAD, 28, 20, 1.5 * Math.PI + gap, 2 * Math.PI - 2 * gap), helmM, head);
+  add(new THREE.SphereGeometry(HRAD, 12, 10, 1.5 * Math.PI - gap - 0.01, 2 * gap + 0.02, 0, 1.05), mat.hRed, head);   // лоб
+  const chin = add(new THREE.SphereGeometry(HRAD * 1.02, 12, 8, 1.5 * Math.PI - gap - 0.01, 2 * gap + 0.02, 2.05, 0.75), mat.hRed, head); chin.position.z = -0.025;   // подбородок
+  const visor = add(new THREE.BoxGeometry(0.23, 0.014, 0.13), mat.hRed, head); visor.position.set(0, 0.125, -0.15); visor.rotation.x = 0.32;
+  const faceT = canvasTex(512, 256, (x, w, h) => {   // лицо: глаза, брови, улыбка
+    x.fillStyle = '#f0c4a2'; x.fillRect(0, 0, w, h); const cx = w * 0.75, cy = h * 0.5;
+    x.fillStyle = 'rgba(235,120,110,0.35)'; for (const k of [-1, 1]) { x.beginPath(); x.ellipse(cx + k * 44, cy + 22, 14, 9, 0, 0, 7); x.fill(); }
+    for (const k of [-1, 1]) { x.fillStyle = '#fff'; x.beginPath(); x.ellipse(cx + k * 28, cy - 2, 12, 14, 0, 0, 7); x.fill(); x.fillStyle = '#5a3a22'; x.beginPath(); x.arc(cx + k * 27, cy, 8, 0, 7); x.fill(); x.fillStyle = '#111'; x.beginPath(); x.arc(cx + k * 27, cy, 4.5, 0, 7); x.fill(); x.fillStyle = '#fff'; x.beginPath(); x.arc(cx + k * 25, cy - 3, 2.2, 0, 7); x.fill();
+      x.strokeStyle = '#7a5530'; x.lineWidth = 5; x.lineCap = 'round'; x.beginPath(); x.moveTo(cx + k * 16, cy - 22); x.lineTo(cx + k * 40, cy - 26); x.stroke(); }
+    x.strokeStyle = '#a0463c'; x.lineWidth = 4; x.beginPath(); x.arc(cx, cy + 24, 14, 0.15 * Math.PI, 0.85 * Math.PI); x.stroke();
+  });
+  const face = add(new THREE.SphereGeometry(0.118, 24, 16), new THREE.MeshStandardMaterial({ map: faceT, roughness: 0.75 }), head); face.position.set(0, -0.012, -0.03);
+  const fringe = add(new THREE.BoxGeometry(0.17, 0.035, 0.03), mat.hair, head); fringe.position.set(0, 0.06, -0.118);
+  // руки и ноги
+  const LEN = { thigh: 0.4, shin: 0.4, up: 0.26, fore: 0.25 };
+  const limbs = {};
+  for (const sd of ['R', 'L']) {
+    const sleeve = sd === 'R' ? mat.sleeveO : mat.sleeveT;
+    limbs[sd] = {
+      thigh: seg(0.07, 0.058, mat.pants), shin: seg(0.05, 0.04, mat.pants), knee: add(new THREE.SphereGeometry(0.062, 12, 10), mat.guard), guard: add(new THREE.SphereGeometry(0.062, 12, 10), mat.guard),
+      shoe: add(new THREE.SphereGeometry(0.05, 12, 8), mat.shoe), sole: add(new THREE.BoxGeometry(0.075, 0.018, 0.17), mat.sole),
+      up: seg(0.05, 0.043, sleeve), fore: seg(0.042, 0.035, sleeve), elbow: add(new THREE.SphereGeometry(0.045, 10, 8), sleeve), hand: add(new THREE.SphereGeometry(0.042, 10, 8), mat.glove), shoulder: add(new THREE.SphereGeometry(0.055, 12, 10), sleeve)
+    };
+    limbs[sd].guard.scale.set(0.9, 1.5, 0.6);
+  }
+  const st = { crank: Math.PI / 2, wheel: 0, crouch: 0, lean: 0, steer: 0, bob: 0 };
+  const hip = new THREE.Vector3(), knee = new THREE.Vector3(), ankle = new THREE.Vector3(), sh = new THREE.Vector3(), elb = new THREE.Vector3(), grip = new THREE.Vector3(), ped = new THREE.Vector3();
+  const poleK = { R: V(0.22, 0, -1).normalize(), L: V(-0.22, 0, -1).normalize() }, poleE = { R: V(0.85, -0.25, 0.5).normalize(), L: V(-0.85, -0.25, 0.5).normalize() };
+  function update(dt, o) {
+    const k = Math.min(1, dt * 8);
+    st.wheel -= o.v / WR * dt; rearW.rotation.x = st.wheel; frontW.rotation.x = st.wheel;
+    if (o.pedal) st.crank += Math.max(2.5, o.v) / (WR * 2.6) * dt;
+    else { const tgt = Math.round((st.crank - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2; st.crank += (tgt - st.crank) * Math.min(1, dt * 5); }   // накат: педали горизонтально
+    st.crouch += ((o.air ? 0.55 : 0) + o.pump * 0.7 - st.crouch) * k;
+    st.lean += (o.lean - st.lean) * k; st.steer += (o.steer - st.steer) * k;
+    front.rotation.y = -st.steer * 0.22;
+    // педали
+    const cr = 0.155;
+    for (const [sd, a] of [['R', st.crank], ['L', st.crank + Math.PI]]) {
+      const sx = sd === 'R' ? 1 : -1; ped.set(0.12 * sx, BB.y + Math.cos(a) * cr, BB.z - Math.sin(a) * cr);
+      const cm = sd === 'R' ? crankR : crankL, pm = sd === 'R' ? pedR : pedL; put(cm, new THREE.Vector3(0.075 * sx, BB.y, BB.z), ped.clone().setX(0.075 * sx)); pm.position.copy(ped);
+      limbs[sd].pedal = ped.clone();
     }
-    ctx.putImageData(id, 0, 0);
-    const t2 = new THREE.CanvasTexture(cv); t2.flipY = false; t2.encoding = THREE.sRGBEncoding; t2.anisotropy = 4; return t2;
-  } catch (e) { return tex; }
-}
-new THREE.GLTFLoader().load('miron.glb', g => {
-  const m = g.scene, box = new THREE.Box3().setFromObject(m), c = box.getCenter(new THREE.Vector3());
-  m.traverse(o => { if (o.isMesh) { o.material.metalness = 0; o.material.roughness = 0.85; if (o.material.map) { o.material.map = recolorJersey(o.material.map); } o.material.needsUpdate = true; o.castShadow = true; o.frustumCulled = false; } });
-  m.position.set(-c.x, -box.min.y, -c.z); const holder = new THREE.Group(); holder.add(m); holder.scale.setScalar(1.55); holder.rotation.y = Math.PI;
-  rider.add(holder); modelReady = true; riderHolder = holder;
-  // принт «PETERHOF BMX + лев» на спину джерси
-  try {
-    rider.updateMatrixWorld(true);
-    const H = box.max.y - box.min.y, fy = window.DECAL_Y || 0.6;
-    const p0 = m.localToWorld(new THREE.Vector3(0, 0, 0)), p1 = m.localToWorld(new THREE.Vector3(0, 0, 1)), dirW = p1.sub(p0).normalize();
-    const org = m.localToWorld(new THREE.Vector3(c.x, box.min.y + H * fy, c.z - 1.5));
-    const hits = new THREE.Raycaster(org, dirW, 0, 6).intersectObject(m, true);
-    if (hits.length) {
-      const hp = rider.worldToLocal(hits[0].point.clone());
-      const pl = new THREE.Mesh(new THREE.PlaneGeometry(window.DECAL_W || 0.5, (window.DECAL_W || 0.5) * 0.96), new THREE.MeshStandardMaterial({ map: tex('decal_back.png'), transparent: true, roughness: 0.9, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
-      pl.position.set(hp.x, hp.y, hp.z + 0.02); rider.add(pl); window.DECAL = pl;
+    // таз: стоя на педалях, ниже и назад при накачке и в воздухе
+    const pedaling = o.pedal ? 1 : 0; st.bob += dt * 6;
+    hip.set(0, 1.0 - st.crouch * 0.15 + pedaling * 0.02 * Math.sin(st.crank * 2), 0.1 + st.crouch * 0.07 + st.lean * 0.06);
+    const lean = 0.62 + st.crouch * 0.25 - st.lean * 0.25;   // наклон корпуса вперёд, рад
+    torso.position.copy(hip); torso.rotation.set(-lean, 0, pedaling * 0.05 * Math.sin(st.crank));
+    const dir = t1.set(0, Math.cos(lean), -Math.sin(lean));
+    const shC = hip.clone().addScaledVector(dir, 0.42);
+    head.position.copy(hip).addScaledVector(dir, 0.57).add(t2.set(0, 0.1, -0.05)); head.rotation.set(0.12 - st.crouch * 0.1, -st.steer * 0.25, 0);
+    front.updateMatrix(); g.updateMatrix();
+    for (const sd of ['R', 'L']) {
+      const sx = sd === 'R' ? 1 : -1, Lm = limbs[sd];
+      const hj = t1.set(0.085 * sx, 0, 0).add(hip).clone();
+      ankle.copy(Lm.pedal).add(t2.set(0, 0.055, 0.035));
+      ik(hj, ankle, LEN.thigh, LEN.shin, poleK[sd], knee);
+      put(Lm.thigh, hj, knee); put(Lm.shin, knee, ankle); Lm.knee.position.copy(knee);
+      Lm.guard.position.copy(knee).add(t2.subVectors(knee, hj).normalize().multiplyScalar(0.02)).add(t3.set(0, 0, -0.03)); Lm.guard.quaternion.copy(Lm.shin.quaternion);
+      Lm.shoe.position.copy(Lm.pedal).add(t2.set(0, 0.04, -0.015)); Lm.shoe.scale.set(0.95, 0.8, 1.9);
+      Lm.sole.position.copy(Lm.pedal).add(t2.set(0, 0.02, -0.015));
+      sh.copy(shC).add(t2.set(0.15 * sx, 0, 0)); Lm.shoulder.position.copy(sh);
+      grip.copy(sd === 'R' ? gripR : gripL).applyMatrix4(front.matrix);
+      ik(sh, grip, LEN.up, LEN.fore, poleE[sd], elb);
+      put(Lm.up, sh, elb); put(Lm.fore, elb, grip); Lm.elbow.position.copy(elb); Lm.hand.position.copy(grip);
     }
-  } catch (e) { console.warn('decal', e); }
-});
+  }
+  g.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
+  update(0, { v: 0, pedal: false, air: false, pump: 0, lean: 0, steer: 0 });
+  return { g, update, mat };
+})();
 
 // музыка и ветер (синтезатор, без файлов)
 const Music = {
@@ -396,7 +524,7 @@ const Music = {
 const dustTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 2, 32, 32, 30); g.addColorStop(0, 'rgba(230,210,170,0.9)'); g.addColorStop(1, 'rgba(230,210,170,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
 const dust = []; for (let i = 0; i < 40; i++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: dustTex, transparent: true, depthWrite: false, opacity: 0 })); sp.visible = false; scene.add(sp); dust.push({ sp, life: 0, vx: 0, vy: 0, vz: 0 }); }
 let dustI = 0;
-function puff(x, y, z, vx, vy, vz, size) { const d = dust[dustI++ % dust.length]; d.life = 1; d.sp.position.set(x, y, z); d.vx = vx; d.vy = vy; d.vz = vz; d.sp.scale.setScalar(size); d.sp.visible = true; }
+function puff(x, y, z, vx, vy, vz, size, grassy) { const d = dust[dustI++ % dust.length]; d.life = 1; d.sp.material.color.set(grassy ? 0x5f9a2a : 0xffffff); d.sp.position.set(x, y, z); d.vx = vx; d.vy = vy; d.vz = vz; d.sp.scale.setScalar(size); d.sp.visible = true; }
 function updateDust(dt) { for (const d of dust) { if (d.life <= 0) continue; d.life -= dt * 1.6; d.sp.position.x += d.vx * dt; d.sp.position.y += d.vy * dt; d.sp.position.z += d.vz * dt; d.sp.material.opacity = Math.max(0, d.life) * 0.55; d.sp.scale.multiplyScalar(1 + dt * 0.8); if (d.life <= 0) d.sp.visible = false; } }
 
 // ======================= ИГРА =======================
@@ -457,6 +585,10 @@ function step(dt) {
     S.v += (inp.gas ? 5.5 : 0) * dt - (inp.brake ? 13 : 0) * dt - G9 * Math.sin(Math.atan(sl)) * dt * 0.9 - S.v * 0.035 * dt - 0.3 * dt + pump * 6.5 * dt;
     const cap = VCAP + S.pumpFx * 3.5; if (inp.gas && S.v > cap) S.v = Math.max(cap, S.v - 6 * dt);
     S.pumpFx *= 0.985;
+    if (Math.abs(S.u) > WALL0 + 0.15) {   // газон: вязнет, скорость падает, газ слабее
+      S.v -= S.v * 0.9 * dt; if (S.v > 6.5) S.v -= (S.v - 6.5) * 2 * dt;
+      if (!S.grassTip && S.v > 3) { S.grassTip = true; tip('Трава: тут медленно, держись бетона'); }
+    }
   } else S.v *= (1 - 0.01 * dt);
   S.v = Math.max(0, Math.min(S.v, VMAX));
   // вираж: лёгкое замедление на крутой дуге
@@ -520,23 +652,18 @@ const camPos = new THREE.Vector3(0, 3, 12), lookP = new THREE.Vector3();
 function applyVisual(dt, inp) {
   const gy = ground(S.u, S.s), w = worldPos(S.s, S.u), yaw = yawAt(S.s);
   const latSlope = wallSlope(S.u) - kap(S.s) * BANK * (Math.abs(S.u) < 3 ? Math.abs(S.u) / 3 : 1);
-  S.roll += ((-inp.steer * 0.4 - latSlope * 0.55 * (S.air > 0.06 ? 0 : 1) - kap(S.s) * S.v * 0.28) - S.roll) * Math.min(1, dt * 8);
+  S.roll += ((-inp.steer * 0.3 - Math.atan(latSlope) * (S.air > 0.06 ? 0 : 1) - kap(S.s) * S.v * 0.2) - S.roll) * Math.min(1, dt * 8);   // колёса всегда стоят на склоне, не проваливаются
   S.tiltVis += (inp.steer - S.tiltVis) * 0.3;
   rider.position.set(w[0], S.y, w[1]); rider.rotation.set(S.pitch, yaw - S.vu * 0.04, S.roll);
   if (S.state === 'run') { recT += dt; if (recT >= 0.1) { recT = 0; rec.push([+S.t.toFixed(2), +S.s.toFixed(2), +S.u.toFixed(2), +S.y.toFixed(2), +S.pitch.toFixed(2), +S.roll.toFixed(2)]); } }
   if (ghostData && modelReady) { makeGhost(); const gp = (S.state === 'run' || S.state === 'count') ? ghostAt(S.state === 'count' ? 0 : S.t) : null; if (gp && ghost) { const gw = worldPos(gp[1], gp[2]); ghost.visible = true; ghost.position.set(gw[0], gp[3], gw[1]); ghost.rotation.set(gp[4], yawAt(gp[1]), gp[5]); } else if (ghost) ghost.visible = false; }
-  if (riderHolder) {   // оживление: качание педалей, приседание при накачке, наклон в вираже
-    S.pedT = (S.pedT || 0) + dt * S.v * 0.85; const ground_ = S.air < 0.06, pump = Math.min(1, S.pumpFx * 1.3);
-    riderHolder.rotation.z = ground_ ? Math.sin(S.pedT) * 0.045 : 0;
-    riderHolder.scale.y = 1.55 * (1 - 0.06 * pump - (S.state === 'run' && ground_ ? 0.012 * Math.abs(Math.sin(S.pedT * 0.5)) : 0));
-    riderHolder.position.y = ground_ ? 0.01 * Math.sin(S.pedT * 2) : 0;
-  }
-  S.dustT = (S.dustT || 0) + dt; if (S.state === 'run' && S.air < 0.06 && S.v > 4 && S.dustT > 0.05) { S.dustT = 0; const t = tan2(S.s); puff(w[0] - t[0] * 0.7, S.y + 0.1, w[1] - t[1] * 0.7, (Math.random() - 0.5) * 0.6 - t[0] * 1.2, 0.5 + Math.random() * 0.4, (Math.random() - 0.5) * 0.6 - t[1] * 1.2, 0.35 + Math.random() * 0.2); }
+  RIG.update(dt, { v: S.state === 'run' || S.state === 'finish' ? S.v : 0, pedal: S.state === 'run' && inp.gas && S.air < 0.06, air: S.air > 0.06, pump: Math.min(1, S.pumpFx * 1.3), lean: inp.lean, steer: inp.steer });
+  S.dustT = (S.dustT || 0) + dt; const grassy = Math.abs(S.u) > WALL0 + 0.15; if (S.state === 'run' && S.air < 0.06 && S.v > (grassy ? 1.5 : 4) && S.dustT > (grassy ? 0.035 : 0.05)) { S.dustT = 0; const t = tan2(S.s); puff(w[0] - t[0] * 0.7, S.y + 0.1, w[1] - t[1] * 0.7, (Math.random() - 0.5) * 0.6 - t[0] * 1.2, 0.5 + Math.random() * 0.4, (Math.random() - 0.5) * 0.6 - t[1] * 1.2, 0.35 + Math.random() * 0.2, grassy); }
   updateDust(dt);
   shadowBlob.position.set(w[0], gy + 0.05, w[1]); const hh = Math.max(0, S.y - gy); shadowBlob.scale.setScalar(Math.max(0.5, 1 - hh * 0.2)); shadowBlob.material.opacity = Math.max(0.06, 0.3 - hh * 0.08);
   sun.position.set(w[0] - 7, S.y + 14, w[1] + 8); sun.target.position.set(w[0], S.y, w[1]);
-  const speedK = Math.min(1, S.v / VCAP), cw = worldPos(S.s - 3.3 - speedK * 1.0, S.u * 0.6);
-  const want = new THREE.Vector3(cw[0], Math.max(ground(S.u * 0.6, S.s - 3.5) + 1.35, S.y + 1.6 - Math.min(0.35, S.air)), cw[1]);
+  const speedK = Math.min(1, S.v / VCAP), cw = worldPos(S.s - 2.7 - speedK * 0.9, S.u * 0.6);
+  const want = new THREE.Vector3(cw[0], Math.max(ground(S.u * 0.6, S.s - 2.9) + 1.3, S.y + 1.5 - Math.min(0.35, S.air)), cw[1]);
   if (S.state === 'wait') { camPos.copy(want); } else camPos.lerp(want, Math.min(1, dt * 6));
   cam.position.copy(camPos);
   if (S.shake > 0) { cam.position.x += (Math.random() - 0.5) * S.shake * 0.25; cam.position.y += (Math.random() - 0.5) * S.shake * 0.25; S.shake *= 0.9; if (S.shake < 0.01) S.shake = 0; }
@@ -581,11 +708,12 @@ function loop(now) {
   let acc = dt * S.ts, guard = 0; while (acc > 0 && guard++ < 6) { const d = Math.min(DT, acc); step(d); acc -= d; }
   if (S.state === 'wait') { const w = worldPos(2, 0); camPos.set(w[0] + 3, 2.2, w[1] + 8); cam.position.copy(camPos); cam.lookAt(w[0], 1.1, w[1]); rider.position.set(w[0], ground(0, 2), w[1]); rider.rotation.set(0, 0.6 + now * 0.0004, 0); pano.position.set(cam.position.x, 60, cam.position.z); }
   if (renderer.domElement.width !== Math.floor(innerWidth * renderer.getPixelRatio()) || renderer.domElement.height !== Math.floor(innerHeight * renderer.getPixelRatio())) resize();
+  if (window.CAMHOOK) window.CAMHOOK();   // для проверок: своя камера
   renderer.render(scene, cam);
 }
 placeAt(2, 0); S.state = 'wait';
 requestAnimationFrame(loop);
-window.G = { S, step, reset, begin, Tilt, ground, scene, cam, renderer, rider, L, LAPS, TK, setQuality, Music, rec, ready: () => modelReady };
+window.G = { S, step, reset, begin, Tilt, ground, scene, cam, renderer, rider, RIG, L, LAPS, TK, setQuality, Music, rec, ready: () => modelReady };
 
 // стартовый экран
 (function startScreen() {
